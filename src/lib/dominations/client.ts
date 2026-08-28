@@ -195,6 +195,45 @@ export async function getProductsForAccount(
   return payload.map(normalizeProduct);
 }
 
+export async function startFreePurchase(
+  credentials: DomiNationsCredential,
+  gameAccountId: string,
+  product: StoreProduct,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<"free"> {
+  const isFree = product.isFree || product.price === 0;
+  if (!isFree || !product.sku || !product.offerId) {
+    throw new AuthError("PURCHASE_NOT_ELIGIBLE");
+  }
+
+  const response = await dominationsRequest(
+    "/api/xsollastore/startpurchase",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        gameAccountId,
+        itemSku: product.sku,
+        offerId: product.offerId,
+        quantity: 1,
+        locale: "en-US",
+        returnToken: true,
+        targetUserHash: "",
+        domgl: false,
+        anonymize: false,
+        projectId: WEB_STORE_PROJECT_ID,
+      }),
+      domiCredentials: credentials,
+    },
+    fetchImplementation,
+  );
+  const payload = await readObject(response);
+
+  if (payload.orderAccessToken !== "free") {
+    throw new AuthError("PAID_CHECKOUT_REJECTED");
+  }
+  return "free";
+}
+
 async function exchangeXsollaToken(
   googleAccessToken: string,
   fetchImplementation: typeof fetch,

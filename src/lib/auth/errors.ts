@@ -9,6 +9,8 @@ export type AuthErrorCode =
   | "SESSION_INVALID"
   | "SESSION_EXPIRED"
   | "SESSION_TOO_LARGE"
+  | "PURCHASE_NOT_ELIGIBLE"
+  | "PAID_CHECKOUT_REJECTED"
   | "UPSTREAM_UNAVAILABLE";
 
 export class AuthError extends Error {

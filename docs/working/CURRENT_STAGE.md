@@ -8,7 +8,7 @@
 
 ## 현재 단계
 
-- 현재 단계: Issue #3 구현·mock 검증 완료, Issue #4 준비
+- 현재 단계: Issue #4 구현·mock 검증 완료, Issue #5 배포 준비
 - 승인 상태: Vercel 실제 배포 직전까지 전 과정 자동 승인 (2026-08-28)
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
@@ -20,7 +20,8 @@
 - 완료 Issue: `#1 [조사] DomiNations World Google 세션 및 무료 토큰 수령 흐름 검증`
 - 배포 검증 대기 Issue: `#2 [기반] 신규 대시보드와 Vercel 미국 리전 PoC 구축`
 - 진행 Issue: `#3 [연동] Google 로그인과 게임 계정 3개 조회 구현`
-- 현재 브랜치: `local/task3`
+- 진행 Issue: `#4 [기능] Free Legendary Token 3계정 일괄 수령 구현`
+- 현재 브랜치: `local/task4`
 - 오늘할일: `docs/orders/20260828.md` Issue #3 로컬 항목 완료
 - 수행계획서: `docs/plans/task_m10_2.md` 구현·로컬 검증 완료
 - 구현계획서: `docs/plans/task_m10_2_impl.md` 구현·로컬 검증 완료
@@ -28,6 +29,9 @@
 - Issue #3 수행계획서: `docs/plans/task_m10_3.md` 구현·mock 검증 완료
 - Issue #3 구현계획서: `docs/plans/task_m10_3_impl.md` 구현·mock 검증 완료
 - Issue #3 테스트 결과: `docs/working/task_m10_3_test_result.md` 로컬 검증 완료
+- Issue #4 수행계획서: `docs/plans/task_m10_4.md` 구현·mock 검증 완료
+- Issue #4 구현계획서: `docs/plans/task_m10_4_impl.md` 구현·mock 검증 완료
+- Issue #4 테스트 결과: `docs/working/task_m10_4_test_result.md` 로컬 검증 완료
 - 기술 조사: `docs/tech/task_m10_1_integration_research.md` 완료
 - 최종 보고서: `docs/report/task_m10_1_report.md` 완료
 
@@ -39,3 +43,5 @@
 - Issue #2는 위 배포 검증이 남아 있어 열어 둔 채 후속 로컬 구현을 진행합니다.
 - Issue #3 실계정 검증에는 작업지시자 소유 Google OAuth 환경 변수와 브라우저 로그인이 필요합니다.
 - 실계정 검증 전까지 계정·상품 조회 성공을 단정하지 않고 수령 기능을 fail-closed로 유지합니다.
+- Issue #4 실동작에는 Upstash Redis REST 환경 변수와 실제 session 상품 검증이 필요합니다.
+- 실제 수령은 mock 외에는 실행하지 않았고 사용자 버튼 전까지 자동 실행 경로가 없습니다.

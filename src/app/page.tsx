@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { SystemDiagnostics } from "@/components/system-diagnostics";
+import { ClaimAllButton } from "@/components/claim-all-button";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -12,6 +13,7 @@ import type { AppSession } from "@/lib/auth/session";
 import { readAppSession } from "@/lib/auth/session";
 import type { DashboardAccount, DashboardSnapshot } from "@/lib/dashboard/snapshot";
 import { loadDashboardSnapshot } from "@/lib/dashboard/snapshot";
+import { getRedisReadiness } from "@/lib/idempotency/redis-rest";
 
 const emptyAccountSlots = [1, 2, 3];
 
@@ -23,6 +25,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
   const authReadiness = getAuthReadiness();
   const authErrorFromRedirect = readStringParam(params.auth_error);
+  const redisReadiness = getRedisReadiness();
   let session: AppSession | null = null;
   let snapshot: DashboardSnapshot | null = null;
   let sessionError: AuthErrorCode | null = null;
@@ -48,6 +51,16 @@ export default async function Home({ searchParams }: HomeProps) {
     snapshot?.accounts.filter((account) => account.product.state === "claimed")
       .length ?? 0;
   const authError = authErrorFromRedirect || sessionError;
+  const claimEnabled = Boolean(
+    session && snapshot?.ready && redisReadiness.configured,
+  );
+  const claimDisabledReason = !session
+    ? "Google 로그인과 계정 확인이 필요합니다."
+    : !snapshot?.ready
+      ? "3개 계정의 exact 무료 상품 검증이 필요합니다."
+      : !redisReadiness.configured
+        ? "중복 방지용 Upstash Redis 설정이 필요합니다."
+        : "버튼을 누를 때만 3개 계정을 순차 처리합니다.";
 
   return (
     <div className="app-shell">
@@ -179,14 +192,11 @@ export default async function Home({ searchParams }: HomeProps) {
                   ))}
             </div>
 
-            <button className="disabled-button" type="button" disabled>
-              모든 계정에서 무료 토큰 수령
-            </button>
-            <p className="button-hint">
-              {snapshot?.ready
-                ? "계정·상품 확인 완료 · Issue #4에서 수령을 활성화합니다."
-                : "로그인과 계정·상품 확인이 완료되어야 활성화됩니다."}
-            </p>
+            <ClaimAllButton
+              enabled={claimEnabled}
+              csrfToken={session?.claimCsrfToken ?? null}
+              disabledReason={claimDisabledReason}
+            />
           </section>
 
           <div id="diagnostics">

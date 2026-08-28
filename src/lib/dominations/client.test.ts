@@ -7,6 +7,7 @@ import {
   getLinkedAccounts,
   getProductsForAccount,
   listGameAccountIds,
+  startFreePurchase,
 } from "./client";
 
 const credentials: DomiNationsCredential = {
@@ -123,5 +124,82 @@ describe("DomiNations authentication adapter", () => {
     await expect(
       listGameAccountIds(credentials, fetchMock),
     ).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it("starts only a free purchase with the fixed safe request body", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ orderAccessToken: "free" }));
+    const product = {
+      name: "Free Legendary Token",
+      sku: "free-token-sku",
+      offerId: "free-token-offer",
+      price: 0,
+      currency: "USD",
+      isFree: true,
+      stockAvailable: 1,
+      stockMax: 1,
+      noInventory: false,
+      disabled: false,
+      locked: false,
+      refreshSeconds: 0,
+      validUntil: null,
+      tags: ["WEB_SPECIALS"],
+    };
+
+    await expect(
+      startFreePurchase(credentials, "account-1", product, fetchMock),
+    ).resolves.toBe("free");
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toEqual({
+      gameAccountId: "account-1",
+      itemSku: "free-token-sku",
+      offerId: "free-token-offer",
+      quantity: 1,
+      locale: "en-US",
+      returnToken: true,
+      targetUserHash: "",
+      domgl: false,
+      anonymize: false,
+      projectId: 277239,
+    });
+  });
+
+  it("rejects paid checkout tokens and blocks non-free products before fetch", async () => {
+    const freeProduct = {
+      name: "Free Legendary Token",
+      sku: "free-token-sku",
+      offerId: "free-token-offer",
+      price: 0,
+      currency: "USD",
+      isFree: true,
+      stockAvailable: 1,
+      stockMax: 1,
+      noInventory: false,
+      disabled: false,
+      locked: false,
+      refreshSeconds: 0,
+      validUntil: null,
+      tags: ["WEB_SPECIALS"],
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ orderAccessToken: "paid-checkout-token" }));
+
+    await expect(
+      startFreePurchase(credentials, "account-1", freeProduct, fetchMock),
+    ).rejects.toMatchObject({ code: "PAID_CHECKOUT_REJECTED" });
+
+    const blockedFetch = vi.fn<typeof fetch>();
+    await expect(
+      startFreePurchase(
+        credentials,
+        "account-1",
+        { ...freeProduct, price: 9.99, isFree: false },
+        blockedFetch,
+      ),
+    ).rejects.toMatchObject({ code: "PURCHASE_NOT_ELIGIBLE" });
+    expect(blockedFetch).not.toHaveBeenCalled();
   });
 });

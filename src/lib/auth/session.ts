@@ -33,6 +33,7 @@ export interface AppSession {
   expiresAt: number;
   admin: AdminIdentity;
   dominations: DomiNationsCredential;
+  claimCsrfToken: string;
 }
 
 export function createOAuthFlow(
@@ -71,6 +72,7 @@ export function createAppSession(
     expiresAt: nowSeconds + APP_SESSION_TTL_SECONDS,
     admin,
     dominations,
+    claimCsrfToken: createRandomToken(),
   };
 
   return { session, sealed: sealPayload(session, secret) };

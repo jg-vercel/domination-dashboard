@@ -521,7 +521,8 @@ main {
 .account-state.product-unverified { color: #a45440; }
 
 .disabled-button,
-.primary-button {
+.primary-button,
+.claim-button {
   width: 100%;
   display: flex;
   align-items: center;
@@ -539,6 +540,74 @@ main {
   background: #eff1f4;
   cursor: not-allowed;
 }
+
+.claim-button {
+  justify-content: space-between;
+  padding-inline: 19px;
+  color: #243049;
+  background: linear-gradient(110deg, #f5c76d, #e7a936);
+  box-shadow: 0 8px 22px rgba(217, 147, 31, 0.2);
+  cursor: pointer;
+}
+
+.claim-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.02);
+}
+
+.claim-control {
+  margin-top: 4px;
+}
+
+.claim-error {
+  margin: 9px 0 0;
+  padding: 10px;
+  border-radius: 7px;
+  color: #a04f3b;
+  background: #faece8;
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.claim-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.claim-results > p {
+  margin: 0 0 3px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.claim-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.claim-result-row strong {
+  font-size: 9px;
+}
+
+.claim-success,
+.claim-already_claimed { color: #397f61; }
+.claim-duplicate { color: #6f64a0; }
+.claim-ineligible,
+.claim-failed,
+.claim-uncertain { color: #a45440; }
 
 .button-hint,
 .diagnostic-note,
