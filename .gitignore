@@ -1,0 +1,25 @@
+# dependencies
+/node_modules/
+
+# Next.js
+/.next/
+/out/
+
+# testing
+/coverage/
+
+# local environment
+.env*
+!.env.example
+
+# Vercel
+.vercel/
+
+# editors and operating systems
+.DS_Store
+*.swp
+
+# logs
+*.log
+pnpm-debug.log*
+*.tsbuildinfo

@@ -1,0 +1,4 @@
+allowBuilds:
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@testing-library/react@16.3.3'

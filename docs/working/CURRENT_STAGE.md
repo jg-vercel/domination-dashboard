@@ -8,7 +8,7 @@
 
 ## 현재 단계
 
-- 현재 단계: Issue #1 종료 및 Issue #2 기반 구축 준비
+- 현재 단계: Issue #2 구현·로컬 검증 완료, 후속 기능 구현 진행
 - 승인 상태: Vercel 실제 배포 직전까지 전 과정 자동 승인 (2026-08-28)
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
@@ -19,10 +19,11 @@
 - 등록 Issue: #1, #2, #3, #4, #5
 - 완료 Issue: `#1 [조사] DomiNations World Google 세션 및 무료 토큰 수령 흐름 검증`
 - 다음 Issue: `#2 [기반] 신규 대시보드와 Vercel 미국 리전 PoC 구축`
-- 현재 브랜치: `local/task1`
-- 오늘할일: `docs/orders/20260828.md` 승인 완료
-- 수행계획서: `docs/plans/archives/task_m10_1.md` 완료·보관
-- 조사 실행계획서: `docs/plans/archives/task_m10_1_impl.md` 완료·보관
+- 현재 브랜치: `local/task2`
+- 오늘할일: `docs/orders/20260828.md` Issue #2 항목 승인·진행중
+- 수행계획서: `docs/plans/task_m10_2.md` 구현·로컬 검증 완료
+- 구현계획서: `docs/plans/task_m10_2_impl.md` 구현·로컬 검증 완료
+- 테스트 결과: `docs/working/task_m10_2_test_result.md` 로컬 검증 완료
 - 기술 조사: `docs/tech/task_m10_1_integration_research.md` 완료
 - 최종 보고서: `docs/report/task_m10_1_report.md` 완료
 
@@ -30,4 +31,5 @@
 
 - Vercel 실제 배포 실행은 자동 승인 범위에서 제외되며 별도 승인이 필요합니다.
 - 외부 인증 또는 계정 소유자의 상호작용이 필요한 단계는 작업지시자의 조치가 필요할 수 있습니다.
-- Issue #2 개발 스택은 작업지시자가 승인한 `Next.js + TypeScript + pnpm`을 기준으로 구체화합니다.
+- 실제 미국 outbound 판정은 Vercel Preview 배포 후에만 완료할 수 있습니다.
+- Issue #2는 위 배포 검증이 남아 있어 열어 둔 채 후속 로컬 구현을 진행합니다.

@@ -1,0 +1,38 @@
+{
+  "name": "domination-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --exclude tests/integration/**",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.3",
+    "jsdom": "30.0.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
