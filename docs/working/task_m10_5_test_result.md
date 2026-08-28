@@ -34,6 +34,7 @@
 | tracked secret pattern scan | 통과 | OAuth/Redis key/private key pattern 없음 |
 | `git ls-files '.env*'` | 통과 | `.env.example`만 추적 |
 | `git check-ignore -v .env.local` | 통과 | `.gitignore`의 `.env*` 규칙 적용 |
+| `vercel whoami` | 인증 필요 | CLI 로그아웃 상태, project·deployment 생성 없음 |
 
 ## 기능 검증
 

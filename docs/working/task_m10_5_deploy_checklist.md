@@ -6,7 +6,8 @@
 - 작성자: Codex
 - 작성일: 2026-08-28
 - 배포 대상: Vercel Node.js `24.x`, Function region `iad1`
-- 확인한 Vercel CLI 버전: `59.9.1` (실행·link·deploy하지 않음)
+- 확인한 Vercel CLI 버전: `59.9.1` (`whoami`만 실행, link·deploy하지 않음)
+- Vercel CLI 인증 상태: 로그아웃, 작업지시자의 device login 필요
 
 ## 승인 경계
 
@@ -23,6 +24,7 @@
 
 ## 1. 사전 준비
 
+- 작업지시자가 로컬 Vercel CLI device login을 완료합니다. 현재 workspace에는 Vercel credential이 없습니다.
 - GitHub branch `local/task5`의 release 검증 결과를 확인합니다.
 - Vercel account/team과 과금 plan을 확인합니다.
 - Google Cloud Web OAuth client의 소유권과 consent screen 상태를 확인합니다.
