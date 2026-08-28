@@ -38,6 +38,7 @@ describe("ClaimAllButton", () => {
       Response.json({
         ok: true,
         cycle: { id: "2026-08-28" },
+        auditRecorded: true,
         results: [
           {
             accountName: "Commander 1",

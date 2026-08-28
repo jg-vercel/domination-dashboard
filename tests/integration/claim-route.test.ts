@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 import { POST as claimAll } from "@/app/api/claims/free-legendary-token/route";
+import { GET as getClaimAudits } from "@/app/api/claims/audit/route";
 import { createAppSession } from "@/lib/auth/session";
 
 const sessionSecret =
@@ -12,6 +13,7 @@ const sessionSecret =
 describe("claim Route Handler safety boundary", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("fails closed before session handling when auth is not configured", async () => {
@@ -63,6 +65,52 @@ describe("claim Route Handler safety boundary", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "CLAIM_STORE_NOT_CONFIGURED" },
     });
+  });
+
+  it("returns only parsed safe audit entries for an authenticated session", async () => {
+    stubAuthEnvironment();
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-secret-token");
+    const { sealed } = createTestSession();
+    const safeAudit = {
+      version: 1,
+      cycleId: "2026-08-28",
+      executedAt: "2026-08-28T00:01:00.000Z",
+      summary: {
+        success: 1,
+        already_claimed: 0,
+        duplicate: 0,
+        ineligible: 0,
+        failed: 0,
+        uncertain: 0,
+      },
+      results: [
+        {
+          accountName: "Commander",
+          maskedAccountId: "••••0001",
+          status: "success",
+          reason: "CONFIRMED",
+        },
+      ],
+    };
+    const redisFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json({ result: [JSON.stringify(safeAudit), "corrupted"] }),
+      );
+    vi.stubGlobal("fetch", redisFetch);
+
+    const response = await getClaimAudits(
+      new NextRequest("http://localhost:3000/api/claims/audit", {
+        headers: { Cookie: `domi_session=${sealed}` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true, audits: [safeAudit] });
+    expect(JSON.stringify(body)).not.toContain("dominations-bearer");
+    expect(JSON.stringify(body)).not.toContain("redis-secret-token");
   });
 });
 

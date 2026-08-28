@@ -91,4 +91,45 @@ describe("Redis REST atomic commands", () => {
       "CLAIM_STORE_UNAVAILABLE",
     );
   });
+
+  it("appends and bounds audit entries with a pipeline", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json([
+        { result: 1 },
+        { result: "OK" },
+        { result: 1 },
+      ]),
+    );
+    const store = new RedisRestClaimStore(
+      "https://redis.example",
+      "redis-token",
+      fetchMock,
+    );
+
+    await expect(
+      store.appendList("audit-key", "safe-json", 50, 2_592_000),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://redis.example/pipeline");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual([
+      ["LPUSH", "audit-key", "safe-json"],
+      ["LTRIM", "audit-key", 0, 49],
+      ["EXPIRE", "audit-key", 2_592_000],
+    ]);
+  });
+
+  it("reads only string list values", async () => {
+    const store = new RedisRestClaimStore(
+      "https://redis.example",
+      "redis-token",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(Response.json({ result: ["one", 2, "three"] })),
+    );
+
+    await expect(store.listRange("audit-key", 0, 9)).resolves.toEqual([
+      "one",
+      "three",
+    ]);
+  });
 });

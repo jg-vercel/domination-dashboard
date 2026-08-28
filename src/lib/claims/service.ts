@@ -19,6 +19,7 @@ import {
 import type { ClaimStore } from "@/lib/idempotency/redis-rest";
 
 import { getClaimCycle, type ClaimCycle } from "./cycle";
+import { recordClaimAudit } from "./audit";
 
 export type ClaimResultStatus =
   | "success"
@@ -49,6 +50,7 @@ export interface BatchClaimResult {
   cycle: ClaimCycle;
   results: AccountClaimResult[];
   summary: Record<ClaimResultStatus, number>;
+  auditRecorded: boolean;
 }
 
 export class BatchClaimInProgressError extends Error {
@@ -104,7 +106,19 @@ export async function claimFreeLegendaryTokenForAllAccounts(
       );
     }
 
-    return { cycle, results, summary: summarize(results) };
+    const summary = summarize(results);
+    const auditRecorded = await recordClaimAudit(
+      session.admin.subject,
+      cycle,
+      results,
+      summary,
+      dependencies.store,
+      dependencies.now,
+    ).then(
+      () => true,
+      () => false,
+    );
+    return { cycle, results, summary, auditRecorded };
   } finally {
     await dependencies.store.compareDelete(batchKey, batchOwner).catch(() => false);
   }

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 
 import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { ClaimAllButton } from "@/components/claim-all-button";
+import { ClaimAuditList } from "@/components/claim-audit-list";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -13,7 +14,13 @@ import type { AppSession } from "@/lib/auth/session";
 import { readAppSession } from "@/lib/auth/session";
 import type { DashboardAccount, DashboardSnapshot } from "@/lib/dashboard/snapshot";
 import { loadDashboardSnapshot } from "@/lib/dashboard/snapshot";
-import { getRedisReadiness } from "@/lib/idempotency/redis-rest";
+import { getClaimCycle } from "@/lib/claims/cycle";
+import type { ClaimAuditEntry } from "@/lib/claims/audit";
+import { listClaimAudits } from "@/lib/claims/audit";
+import {
+  createRedisClaimStore,
+  getRedisReadiness,
+} from "@/lib/idempotency/redis-rest";
 
 const emptyAccountSlots = [1, 2, 3];
 
@@ -26,8 +33,10 @@ export default async function Home({ searchParams }: HomeProps) {
   const authReadiness = getAuthReadiness();
   const authErrorFromRedirect = readStringParam(params.auth_error);
   const redisReadiness = getRedisReadiness();
+  const currentCycle = getClaimCycle();
   let session: AppSession | null = null;
   let snapshot: DashboardSnapshot | null = null;
+  let auditEntries: ClaimAuditEntry[] = [];
   let sessionError: AuthErrorCode | null = null;
 
   if (authReadiness.configured) {
@@ -44,6 +53,14 @@ export default async function Home({ searchParams }: HomeProps) {
       session = null;
       snapshot = null;
     }
+  }
+
+  if (session && redisReadiness.configured) {
+    auditEntries = await listClaimAudits(
+      session.admin.subject,
+      createRedisClaimStore(),
+      10,
+    ).catch(() => []);
   }
 
   const connectedCount = snapshot?.accountCount ?? 0;
@@ -153,7 +170,9 @@ export default async function Home({ searchParams }: HomeProps) {
               <p>다음 갱신</p>
               <strong>09:00</strong>
             </div>
-            <span className="card-status neutral">KST</span>
+            <span className="card-status neutral">
+              {currentCycle.endsAt.slice(0, 10).replaceAll("-", ".")}
+            </span>
           </article>
         </section>
 
@@ -196,6 +215,11 @@ export default async function Home({ searchParams }: HomeProps) {
               enabled={claimEnabled}
               csrfToken={session?.claimCsrfToken ?? null}
               disabledReason={claimDisabledReason}
+              buttonLabel={
+                auditEntries.length > 0
+                  ? "실패·미수령 계정 다시 확인"
+                  : "모든 계정에서 무료 토큰 수령"
+              }
             />
           </section>
 
@@ -203,6 +227,8 @@ export default async function Home({ searchParams }: HomeProps) {
             <SystemDiagnostics />
           </div>
         </div>
+
+        <ClaimAuditList entries={auditEntries} />
 
         <footer>
           <span>Domination Daily · OAuth credentials stay server-side</span>

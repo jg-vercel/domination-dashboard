@@ -21,7 +21,10 @@ describe("sealed OAuth flow", () => {
 
   it("rejects tampering and expiry", () => {
     const { sealed } = createOAuthFlow(secret, 1_000);
-    const tampered = `${sealed.slice(0, -1)}x`;
+    const parts = sealed.split(".");
+    const encrypted = parts[2]!;
+    parts[2] = `${encrypted[0] === "A" ? "B" : "A"}${encrypted.slice(1)}`;
+    const tampered = parts.join(".");
 
     expect(() => readOAuthFlow(tampered, secret, 1_001)).toThrowError(
       AuthError,

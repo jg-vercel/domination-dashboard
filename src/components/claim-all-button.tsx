@@ -22,6 +22,7 @@ interface ClaimResponse {
   ok: true;
   cycle: { id: string };
   results: ClaimResult[];
+  auditRecorded: boolean;
 }
 
 const claimStatuses: ClaimStatus[] = [
@@ -43,10 +44,12 @@ export function ClaimAllButton({
   enabled,
   csrfToken,
   disabledReason,
+  buttonLabel = "모든 계정에서 무료 토큰 수령",
 }: {
   enabled: boolean;
   csrfToken: string | null;
   disabledReason: string;
+  buttonLabel?: string;
 }) {
   const router = useRouter();
   const [state, setState] = useState<ButtonState>({ status: "idle" });
@@ -94,7 +97,9 @@ export function ClaimAllButton({
       >
         {state.status === "loading"
           ? "3개 계정 순차 확인 중…"
-          : "모든 계정에서 무료 토큰 수령"}
+          : state.status === "success"
+            ? "실패·미수령 계정 다시 확인"
+            : buttonLabel}
         {enabled && state.status !== "loading" ? <span aria-hidden="true">→</span> : null}
       </button>
 
@@ -113,6 +118,11 @@ export function ClaimAllButton({
               </strong>
             </div>
           ))}
+          {!state.response.auditRecorded && (
+            <p className="audit-warning">
+              결과는 표시됐지만 감사 기록 저장을 확인하지 못했습니다.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -125,6 +135,7 @@ function isClaimResponse(value: unknown): value is ClaimResponse {
   return (
     response.ok === true &&
     typeof response.cycle?.id === "string" &&
+    typeof response.auditRecorded === "boolean" &&
     Array.isArray(response.results) &&
     response.results.every(
       (result) =>

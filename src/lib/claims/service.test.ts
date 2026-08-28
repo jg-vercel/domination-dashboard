@@ -67,6 +67,7 @@ describe("three-account claim service", () => {
       already_claimed: 1,
       ineligible: 1,
     });
+    expect(result.auditRecorded).toBe(true);
     expect(purchaseAccounts).toEqual([accountIds[0]]);
     expect([...store.values.keys()].join(" ")).not.toContain("game-account");
     expect(JSON.stringify(result)).not.toContain("dominations-bearer");
@@ -167,6 +168,7 @@ describe("three-account claim service", () => {
 
 class MemoryClaimStore implements ClaimStore {
   readonly values = new Map<string, string>();
+  readonly lists = new Map<string, string[]>();
   failNextSetNx = false;
   failLedgerWrites = false;
 
@@ -195,6 +197,15 @@ class MemoryClaimStore implements ClaimStore {
     if (this.values.get(key) !== owner) return false;
     this.values.delete(key);
     return true;
+  }
+
+  async appendList(key: string, value: string, maxItems: number) {
+    const values = [value, ...(this.lists.get(key) ?? [])].slice(0, maxItems);
+    this.lists.set(key, values);
+  }
+
+  async listRange(key: string, start: number, stop: number) {
+    return (this.lists.get(key) ?? []).slice(start, stop + 1);
   }
 }
 

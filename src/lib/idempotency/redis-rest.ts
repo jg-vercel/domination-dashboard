@@ -16,6 +16,13 @@ export interface ClaimStore {
   set(key: string, value: string, ttlSeconds: number): Promise<void>;
   setNx(key: string, value: string, ttlSeconds: number): Promise<boolean>;
   compareDelete(key: string, owner: string): Promise<boolean>;
+  appendList(
+    key: string,
+    value: string,
+    maxItems: number,
+    ttlSeconds: number,
+  ): Promise<void>;
+  listRange(key: string, start: number, stop: number): Promise<string[]>;
 }
 
 export interface RedisReadiness {
@@ -116,19 +123,72 @@ export class RedisRestClaimStore implements ClaimStore {
     return result === 1;
   }
 
+  async appendList(
+    key: string,
+    value: string,
+    maxItems: number,
+    ttlSeconds: number,
+  ): Promise<void> {
+    if (!Number.isInteger(maxItems) || maxItems < 1) {
+      throw new RedisStoreError();
+    }
+    const payload = await this.request<unknown>("/pipeline", [
+      ["LPUSH", key, value],
+      ["LTRIM", key, 0, maxItems - 1],
+      ["EXPIRE", key, normalizeTtl(ttlSeconds)],
+    ]);
+
+    if (
+      !Array.isArray(payload) ||
+      payload.length !== 3 ||
+      payload.some(
+        (item) =>
+          typeof item !== "object" ||
+          item === null ||
+          Array.isArray(item) ||
+          "error" in item ||
+          !("result" in item),
+      )
+    ) {
+      throw new RedisStoreError();
+    }
+  }
+
+  async listRange(key: string, start: number, stop: number): Promise<string[]> {
+    const result = await this.command<unknown>(["LRANGE", key, start, stop]);
+    if (!Array.isArray(result)) {
+      throw new RedisStoreError();
+    }
+    return result.filter((value): value is string => typeof value === "string");
+  }
+
   private async command<T>(command: Array<string | number>): Promise<T> {
+    const payload = await this.request<unknown>("", command);
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      Array.isArray(payload) ||
+      "error" in payload ||
+      !("result" in payload)
+    ) {
+      throw new RedisStoreError();
+    }
+    return (payload as { result: T }).result;
+  }
+
+  private async request<T>(path: string, body: unknown): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REDIS_TIMEOUT_MS);
 
     try {
-      const response = await this.fetchImplementation(this.restUrl, {
+      const response = await this.fetchImplementation(`${this.restUrl}${path}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,
           "Content-Type": "application/json",
           "User-Agent": "domination-dashboard/0.1",
         },
-        body: JSON.stringify(command),
+        body: JSON.stringify(body),
         cache: "no-store",
         signal: controller.signal,
       });
@@ -136,17 +196,7 @@ export class RedisRestClaimStore implements ClaimStore {
         throw new RedisStoreError();
       }
 
-      const payload: unknown = await response.json();
-      if (
-        typeof payload !== "object" ||
-        payload === null ||
-        Array.isArray(payload) ||
-        "error" in payload ||
-        !("result" in payload)
-      ) {
-        throw new RedisStoreError();
-      }
-      return (payload as { result: T }).result;
+      return (await response.json()) as T;
     } catch (error) {
       if (error instanceof RedisStoreError) {
         throw error;

@@ -589,6 +589,15 @@ main {
   letter-spacing: 0.08em;
 }
 
+.claim-results .audit-warning {
+  margin: 4px 0 0;
+  color: #a45440;
+  font-size: 9px;
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .claim-result-row {
   display: flex;
   align-items: center;
@@ -608,6 +617,102 @@ main {
 .claim-ineligible,
 .claim-failed,
 .claim-uncertain { color: #a45440; }
+
+.activity-panel {
+  margin-top: 18px;
+  padding: 25px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper);
+}
+
+.activity-panel .panel-heading {
+  margin-bottom: 18px;
+}
+
+.activity-empty {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px dashed #dfe3e9;
+  border-radius: 9px;
+  color: var(--muted);
+  background: #fafafa;
+}
+
+.activity-empty > span {
+  font-size: 24px;
+  color: #a5afbd;
+}
+
+.activity-empty strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.activity-empty p {
+  margin: 4px 0 0;
+  font-size: 9px;
+}
+
+.activity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.activity-entry {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.55fr) minmax(180px, 0.7fr) minmax(280px, 1.4fr);
+  gap: 18px;
+  align-items: center;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.activity-entry:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-meta,
+.activity-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-meta strong {
+  font-family: Georgia, serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.activity-meta time,
+.activity-accounts span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.activity-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.activity-summary span {
+  padding: 5px 7px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.audit-success,
+.audit-already_claimed { color: #397f61; background: #e6f4ec; }
+.audit-duplicate { color: #6f64a0; background: #efebfb; }
+.audit-ineligible,
+.audit-failed,
+.audit-uncertain { color: #a45440; background: #faece8; }
 
 .button-hint,
 .diagnostic-note,
@@ -715,6 +820,14 @@ footer {
     right: 2%;
     opacity: 0.7;
   }
+
+  .activity-entry {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .activity-accounts {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -768,5 +881,13 @@ footer {
   footer {
     gap: 8px;
     flex-direction: column;
+  }
+
+  .activity-entry {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-accounts {
+    grid-column: auto;
   }
 }

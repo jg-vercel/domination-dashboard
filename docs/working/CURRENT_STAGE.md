@@ -8,7 +8,7 @@
 
 ## 현재 단계
 
-- 현재 단계: Issue #4 구현·mock 검증 완료, Issue #5 배포 준비
+- 현재 단계: M1.0 로컬 구현·release 검증 완료, 실제 Vercel 배포 승인 대기
 - 승인 상태: Vercel 실제 배포 직전까지 전 과정 자동 승인 (2026-08-28)
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
@@ -21,8 +21,9 @@
 - 배포 검증 대기 Issue: `#2 [기반] 신규 대시보드와 Vercel 미국 리전 PoC 구축`
 - 진행 Issue: `#3 [연동] Google 로그인과 게임 계정 3개 조회 구현`
 - 진행 Issue: `#4 [기능] Free Legendary Token 3계정 일괄 수령 구현`
-- 현재 브랜치: `local/task4`
-- 오늘할일: `docs/orders/20260828.md` Issue #3 로컬 항목 완료
+- 진행 Issue: `#5 [UI/배포] 수령 상태 대시보드·재시도·Vercel 배포`
+- 현재 브랜치: `local/task5`
+- 오늘할일: `docs/orders/20260828.md` Issue #2~#5 로컬 항목 완료
 - 수행계획서: `docs/plans/task_m10_2.md` 구현·로컬 검증 완료
 - 구현계획서: `docs/plans/task_m10_2_impl.md` 구현·로컬 검증 완료
 - 테스트 결과: `docs/working/task_m10_2_test_result.md` 로컬 검증 완료
@@ -32,6 +33,10 @@
 - Issue #4 수행계획서: `docs/plans/task_m10_4.md` 구현·mock 검증 완료
 - Issue #4 구현계획서: `docs/plans/task_m10_4_impl.md` 구현·mock 검증 완료
 - Issue #4 테스트 결과: `docs/working/task_m10_4_test_result.md` 로컬 검증 완료
+- Issue #5 수행계획서: `docs/plans/task_m10_5.md` release 검증 완료
+- Issue #5 구현계획서: `docs/plans/task_m10_5_impl.md` release 검증 완료
+- Issue #5 테스트 결과: `docs/working/task_m10_5_test_result.md` release 검증 완료
+- 배포 체크리스트: `docs/working/task_m10_5_deploy_checklist.md` 준비 완료
 - 기술 조사: `docs/tech/task_m10_1_integration_research.md` 완료
 - 최종 보고서: `docs/report/task_m10_1_report.md` 완료
 
@@ -45,3 +50,5 @@
 - 실계정 검증 전까지 계정·상품 조회 성공을 단정하지 않고 수령 기능을 fail-closed로 유지합니다.
 - Issue #4 실동작에는 Upstash Redis REST 환경 변수와 실제 session 상품 검증이 필요합니다.
 - 실제 수령은 mock 외에는 실행하지 않았고 사용자 버튼 전까지 자동 실행 경로가 없습니다.
+- 실제 Vercel link·resource 연결·환경 변수 입력·배포는 별도 승인 전까지 수행하지 않습니다.
+- Issue #2~#5는 배포·실계정 검증 성공 기준이 남아 있어 닫지 않았습니다.
