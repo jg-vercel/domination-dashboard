@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { AuthError } from "./errors";
 import {
-  createAppSession,
+  APP_SESSION_COOKIE_TTL_SECONDS,
+  createAppSessionPointer,
   createOAuthFlow,
-  readAppSession,
+  readAppSessionPointer,
   readOAuthFlow,
 } from "./session";
 
@@ -35,46 +36,28 @@ describe("sealed OAuth flow", () => {
   });
 });
 
-describe("sealed app session", () => {
-  it("keeps raw DomiNations credentials encrypted", () => {
-    const { session, sealed } = createAppSession(
-      {
-        subject: "google-subject",
-        email: "admin@example.com",
-        name: "Admin",
-      },
-      {
-        accessToken: "raw-dominations-token",
-        cookies: ["domi_session=raw-cookie"],
-        userId: "user-1",
-        xsollaId: "xsolla-1",
-      },
+describe("opaque app session cookie", () => {
+  it("contains only a sealed random session pointer", () => {
+    const sessionId = "opaque-session-id-that-is-longer-than-32-characters";
+    const { pointer, sealed } = createAppSessionPointer(sessionId, secret, 2_000);
+
+    expect(sealed).not.toContain(sessionId);
+    expect(pointer.expiresAt).toBe(2_000 + APP_SESSION_COOKIE_TTL_SECONDS);
+    expect(readAppSessionPointer(sealed, secret, 2_001)).toEqual(pointer);
+  });
+
+  it("rejects an expired pointer", () => {
+    const { sealed } = createAppSessionPointer(
+      "opaque-session-id-that-is-longer-than-32-characters",
       secret,
       2_000,
     );
-
-    expect(sealed).not.toContain("raw-dominations-token");
-    expect(sealed).not.toContain("raw-cookie");
-    expect(readAppSession(sealed, secret, 2_001)).toEqual(session);
-  });
-
-  it("fails closed when encrypted credentials exceed the cookie limit", () => {
     expect(() =>
-      createAppSession(
-        {
-          subject: "google-subject",
-          email: "admin@example.com",
-          name: "Admin",
-        },
-        {
-          accessToken: "x".repeat(4_000),
-          cookies: [],
-          userId: "user-1",
-          xsollaId: "xsolla-1",
-        },
+      readAppSessionPointer(
+        sealed,
         secret,
-        2_000,
+        2_001 + APP_SESSION_COOKIE_TTL_SECONDS,
       ),
-    ).toThrowError(expect.objectContaining({ code: "SESSION_TOO_LARGE" }));
+    ).toThrowError(expect.objectContaining({ code: "SESSION_EXPIRED" }));
   });
 });

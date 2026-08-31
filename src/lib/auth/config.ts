@@ -8,7 +8,6 @@ export const APP_SESSION_COOKIE = "domi_session";
 export interface AuthEnvironment {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  ADMIN_GOOGLE_EMAIL?: string;
   APP_SESSION_SECRET?: string;
   APP_BASE_URL?: string;
   NODE_ENV?: string;
@@ -17,7 +16,6 @@ export interface AuthEnvironment {
 export interface AuthConfig {
   googleClientId: string;
   googleClientSecret: string;
-  adminGoogleEmail: string;
   sessionSecret: string;
   baseUrl: string;
   secureCookies: boolean;
@@ -36,7 +34,6 @@ export function getAuthReadiness(
   for (const key of [
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
-    "ADMIN_GOOGLE_EMAIL",
     "APP_SESSION_SECRET",
   ] as const) {
     if (!environment[key]?.trim()) {
@@ -73,7 +70,6 @@ export function getAuthConfig(
   return {
     googleClientId: environment.GOOGLE_CLIENT_ID!.trim(),
     googleClientSecret: environment.GOOGLE_CLIENT_SECRET!.trim(),
-    adminGoogleEmail: environment.ADMIN_GOOGLE_EMAIL!.trim().toLowerCase(),
     sessionSecret: environment.APP_SESSION_SECRET!.trim(),
     baseUrl,
     secureCookies: baseUrl.startsWith("https://"),
@@ -103,7 +99,6 @@ function readProcessEnvironment(): AuthEnvironment {
   return {
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-    ADMIN_GOOGLE_EMAIL: process.env.ADMIN_GOOGLE_EMAIL,
     APP_SESSION_SECRET: process.env.APP_SESSION_SECRET,
     APP_BASE_URL: process.env.APP_BASE_URL,
     NODE_ENV: process.env.NODE_ENV,

@@ -5,7 +5,9 @@ import { NextRequest } from "next/server";
 
 import { POST as claimAll } from "@/app/api/claims/free-legendary-token/route";
 import { GET as getClaimAudits } from "@/app/api/claims/audit/route";
-import { createAppSession } from "@/lib/auth/session";
+import { getAuthConfig } from "@/lib/auth/config";
+import { createServerAppSession } from "@/lib/auth/server-session";
+import type { AuthKeyValueStore } from "@/lib/idempotency/redis-rest";
 
 const sessionSecret =
   "integration-claim-session-secret-with-at-least-32-characters";
@@ -41,7 +43,8 @@ describe("claim Route Handler safety boundary", () => {
 
   it("rejects a mismatched claim CSRF token", async () => {
     stubAuthEnvironment();
-    const { sealed } = createTestSession();
+    const { sealed, redisValues } = await createTestSession();
+    vi.stubGlobal("fetch", createRedisFetch(redisValues));
 
     const response = await claimAll(
       createRequest({ sealedSession: sealed, csrfToken: "wrong-token" }),
@@ -56,7 +59,7 @@ describe("claim Route Handler safety boundary", () => {
     stubAuthEnvironment();
     vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
     vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
-    const { sealed, csrfToken } = createTestSession();
+    const { sealed, csrfToken } = await createTestSession();
 
     const response = await claimAll(
       createRequest({ sealedSession: sealed, csrfToken }),
@@ -71,7 +74,7 @@ describe("claim Route Handler safety boundary", () => {
     stubAuthEnvironment();
     vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
     vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-secret-token");
-    const { sealed } = createTestSession();
+    const { sealed, redisValues } = await createTestSession();
     const safeAudit = {
       version: 1,
       cycleId: "2026-08-28",
@@ -93,11 +96,10 @@ describe("claim Route Handler safety boundary", () => {
         },
       ],
     };
-    const redisFetch = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        Response.json({ result: [JSON.stringify(safeAudit), "corrupted"] }),
-      );
+    const redisFetch = createRedisFetch(redisValues, [
+      JSON.stringify(safeAudit),
+      "corrupted",
+    ]);
     vi.stubGlobal("fetch", redisFetch);
 
     const response = await getClaimAudits(
@@ -117,28 +119,79 @@ describe("claim Route Handler safety boundary", () => {
 function stubAuthEnvironment() {
   vi.stubEnv("GOOGLE_CLIENT_ID", "google-client-id");
   vi.stubEnv("GOOGLE_CLIENT_SECRET", "google-client-secret");
-  vi.stubEnv("ADMIN_GOOGLE_EMAIL", "admin@example.com");
   vi.stubEnv("APP_SESSION_SECRET", sessionSecret);
   vi.stubEnv("APP_BASE_URL", "http://localhost:3000");
   vi.stubEnv("NODE_ENV", "development");
+  vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://redis.example");
+  vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "redis-secret-token");
 }
 
-function createTestSession() {
-  const { session, sealed } = createAppSession(
+async function createTestSession() {
+  const store = new MemoryAuthStore();
+  const { session, sealedCookie } = await createServerAppSession(
     {
       subject: "google-subject",
       email: "admin@example.com",
       name: "Admin",
     },
+    "google-refresh-token",
     {
       accessToken: "dominations-bearer",
       cookies: ["domi=session"],
       userId: "user-1",
       xsollaId: "xsolla-1",
     },
-    sessionSecret,
+    getAuthConfig(),
+    store,
   );
-  return { sealed, csrfToken: session.claimCsrfToken };
+  return {
+    sealed: sealedCookie,
+    csrfToken: session.claimCsrfToken,
+    redisValues: new Map(store.values),
+  };
+}
+
+class MemoryAuthStore implements AuthKeyValueStore {
+  readonly values = new Map<string, string>();
+
+  async get(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  async set(key: string, value: string) {
+    this.values.set(key, value);
+  }
+
+  async delete(key: string) {
+    this.values.delete(key);
+  }
+}
+
+function createRedisFetch(
+  values: Map<string, string>,
+  audits: string[] = [],
+) {
+  return vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+    const command = JSON.parse(String(init?.body)) as unknown[];
+    const operation = command[0];
+    const key = String(command[1] ?? "");
+
+    if (operation === "GET") {
+      return Response.json({ result: values.get(key) ?? null });
+    }
+    if (operation === "SET") {
+      values.set(key, String(command[2] ?? ""));
+      return Response.json({ result: "OK" });
+    }
+    if (operation === "LRANGE") {
+      return Response.json({ result: audits });
+    }
+    if (operation === "DEL") {
+      const existed = values.delete(key);
+      return Response.json({ result: existed ? 1 : 0 });
+    }
+    return Response.json({ error: "unsupported test command" }, { status: 400 });
+  });
 }
 
 function createRequest({

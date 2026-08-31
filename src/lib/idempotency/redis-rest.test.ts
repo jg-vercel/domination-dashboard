@@ -61,6 +61,23 @@ describe("Redis REST atomic commands", () => {
     await expect(store.setNx("lock-key", "owner", 120)).resolves.toBe(false);
   });
 
+  it("deletes an authentication record with a single DEL command", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ result: 1 }));
+    const store = new RedisRestClaimStore(
+      "https://redis.example",
+      "redis-token",
+      fetchMock,
+    );
+
+    await expect(store.delete("auth-key")).resolves.toBeUndefined();
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual([
+      "DEL",
+      "auth-key",
+    ]);
+  });
+
   it("releases a lock through owner-checked Lua only", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

@@ -46,13 +46,13 @@ Google Cloud에서 Web application OAuth client를 만들고 다음 redirect URI
 http://localhost:3000/api/auth/google/callback
 ```
 
-`.env.example`을 참고해 `.env.local`에 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ADMIN_GOOGLE_EMAIL`, `APP_SESSION_SECRET`을 설정합니다. 실제 값은 GitHub, 문서, 채팅에 기록하지 않습니다. 운영 `APP_BASE_URL`과 redirect URI는 Vercel URL이 확정된 뒤 별도로 설정합니다.
+`.env.example`을 참고해 `.env.local`에 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_SESSION_SECRET`을 설정합니다. 실제 값은 GitHub, 문서, 채팅에 기록하지 않습니다. 운영 `APP_BASE_URL`과 redirect URI는 Vercel URL이 확정된 뒤 별도로 설정합니다.
 
-Google 로그인은 비밀번호를 받지 않으며 PKCE/state/nonce, Google ID token 검증, 단일 관리자 email 확인을 통과해야 합니다. Google access token과 Xsolla JWT는 DomiNations session 교환 후 즉시 폐기됩니다.
+Google 로그인은 비밀번호를 받지 않으며 PKCE/state/nonce와 Google ID token 검증을 통과해야 합니다. 로그인한 Google subject가 자신의 session 소유자가 되며 고정 관리자 이메일은 사용하지 않습니다. Google access token과 Xsolla JWT는 DomiNations session 교환 후 즉시 폐기됩니다.
 
 ### 중복 방지 저장소
 
-Vercel Marketplace에서 Upstash Redis를 연결한 뒤 `UPSTASH_REDIS_REST_URL`과 read/write `UPSTASH_REDIS_REST_TOKEN`을 주입합니다. 둘 중 하나라도 없거나 Redis가 응답하지 않으면 실제 수령 endpoint는 `503`으로 닫힙니다.
+Vercel Marketplace에서 Upstash Redis를 연결한 뒤 `UPSTASH_REDIS_REST_URL`과 read/write `UPSTASH_REDIS_REST_TOKEN`을 주입합니다. Google refresh token과 DomiNations credential은 AES-256-GCM으로 봉인된 server-side session에만 저장되고, browser에는 opaque HttpOnly cookie만 남습니다. session은 정상 활동마다 180일 idle TTL을 연장하며 Google 권한 취소·만료 시 재로그인을 요구합니다. Redis가 없거나 응답하지 않으면 인증과 실제 수령 endpoint는 fail-closed됩니다.
 
 수령은 매일 09:00 KST cycle 단위로 잠금·기록됩니다. exact `Web Specials > Free Legendary Token`, 무료 가격, SKU, offer, stock을 요청 직전에 다시 확인하고 `orderAccessToken`이 `free`가 아니면 외부 checkout을 열지 않습니다.
 

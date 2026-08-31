@@ -1,9 +1,11 @@
 import "server-only";
 
 import { createPkcePair, createRandomToken, sealPayload, unsealPayload } from "./crypto";
+import { AuthError } from "./errors";
 
 export const OAUTH_FLOW_TTL_SECONDS = 10 * 60;
-export const APP_SESSION_TTL_SECONDS = 12 * 60 * 60;
+export const APP_SESSION_IDLE_TTL_SECONDS = 180 * 24 * 60 * 60;
+export const APP_SESSION_COOKIE_TTL_SECONDS = 400 * 24 * 60 * 60;
 
 export interface OAuthFlow {
   issuedAt: number;
@@ -36,6 +38,12 @@ export interface AppSession {
   claimCsrfToken: string;
 }
 
+export interface AppSessionPointer {
+  issuedAt: number;
+  expiresAt: number;
+  sessionId: string;
+}
+
 export function createOAuthFlow(
   secret: string,
   nowSeconds = Math.floor(Date.now() / 1_000),
@@ -61,29 +69,30 @@ export function readOAuthFlow(
   return unsealPayload<OAuthFlow>(sealed, secret, nowSeconds);
 }
 
-export function createAppSession(
-  admin: AdminIdentity,
-  dominations: DomiNationsCredential,
+export function createAppSessionPointer(
+  sessionId: string,
   secret: string,
   nowSeconds = Math.floor(Date.now() / 1_000),
-): { session: AppSession; sealed: string } {
-  const session: AppSession = {
+): { pointer: AppSessionPointer; sealed: string } {
+  const pointer: AppSessionPointer = {
     issuedAt: nowSeconds,
-    expiresAt: nowSeconds + APP_SESSION_TTL_SECONDS,
-    admin,
-    dominations,
-    claimCsrfToken: createRandomToken(),
+    expiresAt: nowSeconds + APP_SESSION_COOKIE_TTL_SECONDS,
+    sessionId,
   };
 
-  return { session, sealed: sealPayload(session, secret) };
+  return { pointer, sealed: sealPayload(pointer, secret) };
 }
 
-export function readAppSession(
+export function readAppSessionPointer(
   sealed: string,
   secret: string,
   nowSeconds?: number,
-): AppSession {
-  return unsealPayload<AppSession>(sealed, secret, nowSeconds);
+): AppSessionPointer {
+  const pointer = unsealPayload<AppSessionPointer>(sealed, secret, nowSeconds);
+  if (typeof pointer.sessionId !== "string" || pointer.sessionId.length < 32) {
+    throw new AuthError("SESSION_INVALID");
+  }
+  return pointer;
 }
 
 export function authCookieOptions(

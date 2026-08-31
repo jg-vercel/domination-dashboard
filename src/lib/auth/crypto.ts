@@ -13,6 +13,7 @@ import { AuthError } from "./errors";
 const SEALED_VERSION = "v1";
 const SEALED_AAD = Buffer.from("domination-dashboard:sealed:v1", "utf8");
 export const MAX_SEALED_COOKIE_BYTES = 3_500;
+export const MAX_SEALED_SERVER_SESSION_BYTES = 16_384;
 
 export interface ExpiringPayload {
   issuedAt: number;
@@ -49,6 +50,7 @@ export function secureStringEqual(left: string, right: string): boolean {
 export function sealPayload<T extends ExpiringPayload>(
   payload: T,
   secret: string,
+  maxBytes = MAX_SEALED_COOKIE_BYTES,
 ): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", deriveKey(secret), iv);
@@ -66,7 +68,7 @@ export function sealPayload<T extends ExpiringPayload>(
     authenticationTag.toString("base64url"),
   ].join(".");
 
-  if (Buffer.byteLength(sealed, "utf8") > MAX_SEALED_COOKIE_BYTES) {
+  if (Buffer.byteLength(sealed, "utf8") > maxBytes) {
     throw new AuthError("SESSION_TOO_LARGE");
   }
 

@@ -25,6 +25,12 @@ export interface ClaimStore {
   listRange(key: string, start: number, stop: number): Promise<string[]>;
 }
 
+export interface AuthKeyValueStore {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, ttlSeconds: number): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 export interface RedisReadiness {
   configured: boolean;
   missing: string[];
@@ -54,6 +60,20 @@ export function createRedisClaimStore(
   environment: RedisEnvironment = readRedisEnvironment(),
   fetchImplementation: typeof fetch = fetch,
 ): ClaimStore {
+  return createRedisStore(environment, fetchImplementation);
+}
+
+export function createRedisAuthStore(
+  environment: RedisEnvironment = readRedisEnvironment(),
+  fetchImplementation: typeof fetch = fetch,
+): AuthKeyValueStore {
+  return createRedisStore(environment, fetchImplementation);
+}
+
+function createRedisStore(
+  environment: RedisEnvironment,
+  fetchImplementation: typeof fetch,
+): RedisRestClaimStore {
   if (!getRedisReadiness(environment).configured) {
     throw new AuthError("AUTH_NOT_CONFIGURED");
   }
@@ -96,6 +116,13 @@ export class RedisRestClaimStore implements ClaimStore {
       normalizeTtl(ttlSeconds),
     ]);
     if (result !== "OK") {
+      throw new RedisStoreError();
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    const result = await this.command<unknown>(["DEL", key]);
+    if (typeof result !== "number" || result < 0) {
       throw new RedisStoreError();
     }
   }

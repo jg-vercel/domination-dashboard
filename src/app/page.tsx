@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { ClaimAllButton } from "@/components/claim-all-button";
 import { ClaimAuditList } from "@/components/claim-audit-list";
+import { SessionKeepalive } from "@/components/session-keepalive";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -11,7 +12,7 @@ import {
 import type { AuthErrorCode } from "@/lib/auth/errors";
 import { asAuthError } from "@/lib/auth/errors";
 import type { AppSession } from "@/lib/auth/session";
-import { readAppSession } from "@/lib/auth/session";
+import { resolveServerAppSession } from "@/lib/auth/server-session";
 import type { DashboardAccount, DashboardSnapshot } from "@/lib/dashboard/snapshot";
 import { loadDashboardSnapshot } from "@/lib/dashboard/snapshot";
 import { getClaimCycle } from "@/lib/claims/cycle";
@@ -39,14 +40,24 @@ export default async function Home({ searchParams }: HomeProps) {
   let auditEntries: ClaimAuditEntry[] = [];
   let sessionError: AuthErrorCode | null = null;
 
-  if (authReadiness.configured) {
+  if (authReadiness.configured && redisReadiness.configured) {
     try {
       const config = getAuthConfig();
       const cookieStore = await cookies();
       const sealedSession = cookieStore.get(APP_SESSION_COOKIE)?.value;
       if (sealedSession) {
-        session = readAppSession(sealedSession, config.sessionSecret);
-        snapshot = await loadDashboardSnapshot(session.dominations);
+        let resolved = await resolveServerAppSession(sealedSession, config);
+        session = resolved.session;
+        try {
+          snapshot = await loadDashboardSnapshot(session.dominations);
+        } catch (error) {
+          if (asAuthError(error).code !== "SESSION_EXPIRED") throw error;
+          resolved = await resolveServerAppSession(sealedSession, config, {
+            forceReconnect: true,
+          });
+          session = resolved.session;
+          snapshot = await loadDashboardSnapshot(session.dominations);
+        }
       }
     } catch (error) {
       sessionError = asAuthError(error).code;
@@ -81,6 +92,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <div className="app-shell">
+      <SessionKeepalive active={Boolean(session)} />
       <aside className="sidebar">
         <div className="brand-mark" aria-label="Domination Daily">
           <span className="brand-icon">D</span>
@@ -118,7 +130,7 @@ export default async function Home({ searchParams }: HomeProps) {
             <h1>오늘의 무료 보상을 준비하세요.</h1>
           </div>
           <AuthControl
-            configured={authReadiness.configured}
+            configured={authReadiness.configured && redisReadiness.configured}
             session={session}
           />
         </header>
@@ -324,7 +336,8 @@ function AuthErrorBanner({ code }: { code: string }) {
     OAUTH_FLOW_INVALID: "로그인 요청이 만료되었거나 일치하지 않습니다. 다시 로그인해 주세요.",
     OAUTH_PROVIDER_ERROR: "Google 로그인이 완료되지 않았습니다.",
     GOOGLE_TOKEN_REJECTED: "Google 인증을 확인하지 못했습니다. 다시 로그인해 주세요.",
-    ADMIN_NOT_ALLOWED: "허용된 관리자 Google 계정이 아닙니다.",
+    GOOGLE_REFRESH_TOKEN_MISSING: "장기 로그인 권한을 받지 못했습니다. Google 동의를 다시 진행해 주세요.",
+    GOOGLE_REFRESH_REJECTED: "Google 장기 로그인이 만료되거나 취소되었습니다. 다시 로그인해 주세요.",
     DOMINATIONS_AUTH_REJECTED: "DomiNations World session 연결이 거부되었습니다.",
     ACCOUNT_COUNT_MISMATCH: "연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
     SESSION_INVALID: "로그인 session이 올바르지 않아 삭제가 필요합니다.",

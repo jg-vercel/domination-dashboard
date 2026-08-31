@@ -19,12 +19,20 @@ const GOOGLE_REQUEST_TIMEOUT_MS = 8_000;
 interface GoogleTokenResponse {
   access_token: string;
   id_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  token_type: string;
+}
+
+interface GoogleRefreshResponse {
+  access_token: string;
   expires_in: number;
   token_type: string;
 }
 
 export interface GoogleExchangeResult {
   accessToken: string;
+  refreshToken: string;
   identity: AdminIdentity;
 }
 
@@ -48,8 +56,9 @@ export function buildGoogleAuthorizationUrl(
     nonce: flow.nonce,
     code_challenge: flow.codeChallenge,
     code_challenge_method: "S256",
-    access_type: "online",
-    prompt: "select_account",
+    access_type: "offline",
+    prompt: "consent select_account",
+    include_granted_scopes: "true",
   }).toString();
   return url;
 }
@@ -100,13 +109,66 @@ export async function exchangeGoogleAuthorizationCode(
       flow.nonce,
     );
 
-    if (identity.email.toLowerCase() !== config.adminGoogleEmail) {
-      throw new AuthError("ADMIN_NOT_ALLOWED");
+    if (typeof payload.refresh_token !== "string" || !payload.refresh_token) {
+      throw new AuthError("GOOGLE_REFRESH_TOKEN_MISSING");
     }
 
-    return { accessToken: payload.access_token, identity };
+    return {
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+      identity,
+    };
   } catch (error) {
     if (error instanceof AuthError) {
+      throw error;
+    }
+    throw new AuthError("UPSTREAM_UNAVAILABLE", { cause: error });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function refreshGoogleAccessToken(
+  config: AuthConfig,
+  refreshToken: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GOOGLE_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetchImplementation(GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: config.googleClientId,
+        client_secret: config.googleClientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new AuthError("GOOGLE_REFRESH_REJECTED");
+    }
+
+    const payload = (await safeJson(response)) as Partial<GoogleRefreshResponse>;
+    if (
+      typeof payload.access_token !== "string" ||
+      !payload.access_token ||
+      typeof payload.expires_in !== "number" ||
+      payload.token_type?.toLowerCase() !== "bearer"
+    ) {
+      throw new AuthError("GOOGLE_REFRESH_REJECTED");
+    }
+    return payload.access_token;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      if (error.code === "GOOGLE_TOKEN_REJECTED") {
+        throw new AuthError("GOOGLE_REFRESH_REJECTED", { cause: error });
+      }
       throw error;
     }
     throw new AuthError("UPSTREAM_UNAVAILABLE", { cause: error });

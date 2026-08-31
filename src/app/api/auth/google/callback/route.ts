@@ -10,11 +10,11 @@ import { secureStringEqual } from "@/lib/auth/crypto";
 import { asAuthError, AuthError } from "@/lib/auth/errors";
 import { exchangeGoogleAuthorizationCode } from "@/lib/auth/google";
 import {
-  APP_SESSION_TTL_SECONDS,
+  APP_SESSION_COOKIE_TTL_SECONDS,
   authCookieOptions,
-  createAppSession,
   readOAuthFlow,
 } from "@/lib/auth/session";
+import { createServerAppSession } from "@/lib/auth/server-session";
 import { loadAccountDirectory } from "@/lib/dashboard/snapshot";
 import { connectDomiNations } from "@/lib/dominations/client";
 
@@ -51,18 +51,22 @@ export async function GET(request: NextRequest) {
     // exactly the three unique linked DomiNations accounts in scope.
     await loadAccountDirectory(dominations);
 
-    const { sealed } = createAppSession(
+    const { sealedCookie } = await createServerAppSession(
       google.identity,
+      google.refreshToken,
       dominations,
-      config.sessionSecret,
+      config,
     );
     const response = NextResponse.redirect(
       new URL("/?auth=connected", config.baseUrl),
     );
     response.cookies.set(
       APP_SESSION_COOKIE,
-      sealed,
-      authCookieOptions(config.secureCookies, APP_SESSION_TTL_SECONDS),
+      sealedCookie,
+      authCookieOptions(
+        config.secureCookies,
+        APP_SESSION_COOKIE_TTL_SECONDS,
+      ),
     );
     clearFlowCookie(response, config.secureCookies);
     response.headers.set("Cache-Control", "no-store");

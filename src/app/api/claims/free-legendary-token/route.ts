@@ -7,7 +7,11 @@ import {
 } from "@/lib/auth/config";
 import { secureStringEqual } from "@/lib/auth/crypto";
 import { asAuthError } from "@/lib/auth/errors";
-import { readAppSession } from "@/lib/auth/session";
+import { resolveServerAppSession } from "@/lib/auth/server-session";
+import {
+  APP_SESSION_COOKIE_TTL_SECONDS,
+  authCookieOptions,
+} from "@/lib/auth/session";
 import {
   BatchClaimInProgressError,
   claimFreeLegendaryTokenForAllAccounts,
@@ -37,23 +41,40 @@ export async function POST(request: NextRequest) {
       return errorResponse("AUTH_REQUIRED", 401);
     }
 
-    const session = readAppSession(sealedSession, config.sessionSecret);
-    const csrfToken = request.headers.get("x-claim-csrf");
-    if (!csrfToken || !secureStringEqual(csrfToken, session.claimCsrfToken)) {
-      return errorResponse("CSRF_REJECTED", 403);
-    }
-
     if (!getRedisReadiness().configured) {
       return errorResponse("CLAIM_STORE_NOT_CONFIGURED", 503);
     }
 
-    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+    const initial = await resolveServerAppSession(sealedSession, config, {
+      skipReconnect: true,
+    });
+    const csrfToken = request.headers.get("x-claim-csrf");
+    if (
+      !csrfToken ||
+      !secureStringEqual(csrfToken, initial.session.claimCsrfToken)
+    ) {
+      return errorResponse("CSRF_REJECTED", 403);
+    }
+
+    const resolved = await resolveServerAppSession(sealedSession, config, {
+      forceReconnect: true,
+    });
+    const result = await claimFreeLegendaryTokenForAllAccounts(resolved.session, {
       store: createRedisClaimStore(),
     });
-    return NextResponse.json(
+    const response = NextResponse.json(
       { ok: true, ...result },
       { headers: noStoreHeaders },
     );
+    response.cookies.set(
+      APP_SESSION_COOKIE,
+      resolved.sealedCookie,
+      authCookieOptions(
+        config.secureCookies,
+        APP_SESSION_COOKIE_TTL_SECONDS,
+      ),
+    );
+    return response;
   } catch (error) {
     if (error instanceof BatchClaimInProgressError) {
       return errorResponse("BATCH_IN_PROGRESS", 409);
@@ -63,7 +84,11 @@ export async function POST(request: NextRequest) {
     }
 
     const authError = asAuthError(error);
-    if (authError.code === "SESSION_EXPIRED" || authError.code === "SESSION_INVALID") {
+    if (
+      authError.code === "SESSION_EXPIRED" ||
+      authError.code === "SESSION_INVALID" ||
+      authError.code === "GOOGLE_REFRESH_REJECTED"
+    ) {
       return errorResponse("AUTH_REQUIRED", 401);
     }
     if (authError.code === "ACCOUNT_COUNT_MISMATCH") {

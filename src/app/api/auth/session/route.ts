@@ -8,9 +8,7 @@ import {
   APP_SESSION_COOKIE_TTL_SECONDS,
   authCookieOptions,
 } from "@/lib/auth/session";
-import { listClaimAudits } from "@/lib/claims/audit";
 import {
-  createRedisClaimStore,
   getRedisReadiness,
   RedisStoreError,
 } from "@/lib/idempotency/redis-rest";
@@ -20,26 +18,27 @@ export const dynamic = "force-dynamic";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
-export async function GET(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const config = getAuthConfig();
-    const sealedSession = request.cookies.get(APP_SESSION_COOKIE)?.value;
-    if (!sealedSession) return errorResponse("AUTH_REQUIRED", 401);
-
-    if (!getRedisReadiness().configured) {
-      return errorResponse("CLAIM_STORE_NOT_CONFIGURED", 503);
+    const origin = request.headers.get("origin");
+    if (!origin || origin !== new URL(config.baseUrl).origin) {
+      return errorResponse("ORIGIN_REJECTED", 403);
     }
-    const resolved = await resolveServerAppSession(sealedSession, config);
 
-    const audits = await listClaimAudits(
-      resolved.session.admin.subject,
-      createRedisClaimStore(),
-      10,
-    );
-    const response = NextResponse.json(
-      { ok: true, audits },
-      { headers: noStoreHeaders },
-    );
+    const sealedSession = request.cookies.get(APP_SESSION_COOKIE)?.value;
+    if (!sealedSession) {
+      return errorResponse("AUTH_REQUIRED", 401);
+    }
+    if (!getRedisReadiness().configured) {
+      return errorResponse("SESSION_STORE_NOT_CONFIGURED", 503);
+    }
+
+    const resolved = await resolveServerAppSession(sealedSession, config);
+    const response = new NextResponse(null, {
+      status: 204,
+      headers: noStoreHeaders,
+    });
     response.cookies.set(
       APP_SESSION_COOKIE,
       resolved.sealedCookie,
@@ -51,7 +50,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof RedisStoreError) {
-      return errorResponse("CLAIM_STORE_UNAVAILABLE", 503);
+      return errorResponse("SESSION_STORE_UNAVAILABLE", 503);
     }
     const authError = asAuthError(error);
     if (
@@ -62,15 +61,15 @@ export async function GET(request: NextRequest) {
       return errorResponse("AUTH_REQUIRED", 401);
     }
     if (authError.code === "AUTH_NOT_CONFIGURED") {
-      return errorResponse("CLAIM_NOT_CONFIGURED", 503);
+      return errorResponse("AUTH_NOT_CONFIGURED", 503);
     }
-    return errorResponse("AUDIT_UNAVAILABLE", 502);
+    return errorResponse("SESSION_REFRESH_FAILED", 502);
   }
 }
 
 function errorResponse(code: string, status: number) {
   return NextResponse.json(
-    { ok: false, error: { code, message: "최근 실행 기록을 확인하지 못했습니다." } },
+    { ok: false, error: { code } },
     { status, headers: noStoreHeaders },
   );
 }
