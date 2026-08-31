@@ -4,7 +4,7 @@
 
 ## 상태
 
-- 상태: 구현·release 검증 및 Google OAuth Preview 재배포 완료, 실계정 검증 대기
+- 상태: upstream 인증 단계 진단 패치 release 검증 완료, Preview 재배포 진행중
 - 작성자: Codex
 - 범위: 인증 config·Google adapter·Redis session store·Route Handler·dashboard 전환
 
@@ -29,10 +29,12 @@ dashboard는 저장 credential로 조회하다 `SESSION_EXPIRED`가 발생하면
 - 경로: Google callback, logout, dashboard page, claim·audit Route Handler
 - UI·문서: 인증 안내 문구, README, working 문서
 - 테스트: auth/Redis 단위 테스트와 auth·claim 통합 테스트
+- 진단 패치: Xsolla Google token, DomiNations signup, DomiNations token 거부 코드를 분리하고 stage·HTTP status만 기록
 
 ## 보안 불변조건
 
 - Google refresh token과 DomiNations credential은 client component·response JSON·log에 포함하지 않습니다.
+- upstream 진단 로그에는 stage와 HTTP status만 포함하고 token, cookie, Google identity, response body를 포함하지 않습니다.
 - Redis value는 평문 token을 저장하지 않습니다.
 - session cookie에는 upstream token 또는 Google email을 저장하지 않습니다.
 - refresh token 누락·거부, Redis 장애, account 3개 검증 실패 시 session을 발급하거나 claim하지 않습니다.
@@ -59,3 +61,4 @@ dashboard는 저장 credential로 조회하다 `SESSION_EXPIRED`가 발생하면
 - 소스 수정 승인자: 작업지시자
 - 승인일: 2026-08-31
 - 승인 범위: Issue #6 구현·테스트·문서 갱신
+- 추가 승인 범위: upstream 인증 단계 진단 패치·테스트·Preview 재배포 (2026-08-31)

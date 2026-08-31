@@ -67,6 +67,91 @@ describe("DomiNations authentication adapter", () => {
     expect(tokenHeaders.get("Cookie")).toBe("auth_flow=flow-cookie");
   });
 
+  it("identifies an Xsolla Google token rejection without logging secrets", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("private provider response", { status: 401 }),
+    );
+
+    try {
+      await expect(
+        connectDomiNations("private-google-access-token", fetchMock),
+      ).rejects.toMatchObject({ code: "XSOLLA_GOOGLE_TOKEN_REJECTED" });
+      expect(warning).toHaveBeenCalledWith("Upstream authentication rejected", {
+        stage: "xsolla_google_token",
+        status: 401,
+      });
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "private-google-access-token",
+      );
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "private provider response",
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("identifies a DomiNations signup rejection without logging secrets", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ token: "private-xsolla-jwt" }))
+      .mockResolvedValueOnce(
+        new Response("private signup response", { status: 403 }),
+      );
+
+    try {
+      await expect(
+        connectDomiNations("private-google-access-token", fetchMock),
+      ).rejects.toMatchObject({ code: "DOMINATIONS_SIGNUP_REJECTED" });
+      expect(warning).toHaveBeenCalledWith("Upstream authentication rejected", {
+        stage: "dominations_signup",
+        status: 403,
+      });
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("private-xsolla-jwt");
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "private signup response",
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("identifies a DomiNations token rejection without logging secrets", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ token: "private-xsolla-jwt" }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { authcode: "private-domi-auth-code" },
+          { headers: { "Set-Cookie": "private-flow-cookie=value" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response("private token response", { status: 422 }),
+      );
+
+    try {
+      await expect(
+        connectDomiNations("private-google-access-token", fetchMock),
+      ).rejects.toMatchObject({ code: "DOMINATIONS_TOKEN_REJECTED" });
+      expect(warning).toHaveBeenCalledWith("Upstream authentication rejected", {
+        stage: "dominations_token",
+        status: 422,
+      });
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "private-domi-auth-code",
+      );
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(
+        "private token response",
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("uses bearer and cookie credentials for account and product reads", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = String(input);

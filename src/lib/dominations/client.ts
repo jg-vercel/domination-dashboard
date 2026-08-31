@@ -2,6 +2,7 @@ import "server-only";
 
 import { createPkcePair, createRandomToken } from "@/lib/auth/crypto";
 import { AuthError } from "@/lib/auth/errors";
+import type { AuthErrorCode } from "@/lib/auth/errors";
 import type { DomiNationsCredential } from "@/lib/auth/session";
 
 export const DOMINATIONS_API_ORIGIN = "https://api.dominationsworld.com";
@@ -72,16 +73,28 @@ export async function connectDomiNations(
   cookies = mergeCookies(cookies, readResponseCookies(signupResponse.headers));
 
   if (!signupResponse.ok) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "DOMINATIONS_SIGNUP_REJECTED",
+      "dominations_signup",
+      signupResponse.status,
+    );
   }
 
-  const signupPayload = await readObject(signupResponse);
+  const signupPayload = await readAuthenticationPayload(
+    signupResponse,
+    "DOMINATIONS_SIGNUP_REJECTED",
+    "dominations_signup",
+  );
   if (
     typeof signupPayload.errorReason === "string" ||
     typeof signupPayload.authcode !== "string" ||
     !signupPayload.authcode
   ) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "DOMINATIONS_SIGNUP_REJECTED",
+      "dominations_signup",
+      signupResponse.status,
+    );
   }
 
   const tokenResponse = await requestUpstream(
@@ -105,12 +118,24 @@ export async function connectDomiNations(
   cookies = mergeCookies(cookies, readResponseCookies(tokenResponse.headers));
 
   if (!tokenResponse.ok) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "DOMINATIONS_TOKEN_REJECTED",
+      "dominations_token",
+      tokenResponse.status,
+    );
   }
 
-  const tokenPayload = await readObject(tokenResponse);
+  const tokenPayload = await readAuthenticationPayload(
+    tokenResponse,
+    "DOMINATIONS_TOKEN_REJECTED",
+    "dominations_token",
+  );
   if (typeof tokenPayload.token !== "string" || !tokenPayload.token) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "DOMINATIONS_TOKEN_REJECTED",
+      "dominations_token",
+      tokenResponse.status,
+    );
   }
 
   return {
@@ -256,14 +281,59 @@ async function exchangeXsollaToken(
   );
 
   if (!response.ok) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "XSOLLA_GOOGLE_TOKEN_REJECTED",
+      "xsolla_google_token",
+      response.status,
+    );
   }
 
-  const payload = await readObject(response);
+  const payload = await readAuthenticationPayload(
+    response,
+    "XSOLLA_GOOGLE_TOKEN_REJECTED",
+    "xsolla_google_token",
+  );
   if (typeof payload.token !== "string" || !payload.token) {
-    throw new AuthError("DOMINATIONS_AUTH_REJECTED");
+    rejectUpstreamAuthentication(
+      "XSOLLA_GOOGLE_TOKEN_REJECTED",
+      "xsolla_google_token",
+      response.status,
+    );
   }
   return payload.token;
+}
+
+type UpstreamAuthenticationStage =
+  | "xsolla_google_token"
+  | "dominations_signup"
+  | "dominations_token";
+
+type UpstreamAuthenticationErrorCode = Extract<
+  AuthErrorCode,
+  | "XSOLLA_GOOGLE_TOKEN_REJECTED"
+  | "DOMINATIONS_SIGNUP_REJECTED"
+  | "DOMINATIONS_TOKEN_REJECTED"
+>;
+
+async function readAuthenticationPayload(
+  response: Response,
+  code: UpstreamAuthenticationErrorCode,
+  stage: UpstreamAuthenticationStage,
+): Promise<Record<string, unknown>> {
+  try {
+    return await readObject(response);
+  } catch {
+    rejectUpstreamAuthentication(code, stage, response.status);
+  }
+}
+
+function rejectUpstreamAuthentication(
+  code: UpstreamAuthenticationErrorCode,
+  stage: UpstreamAuthenticationStage,
+  status: number,
+): never {
+  console.warn("Upstream authentication rejected", { stage, status });
+  throw new AuthError(code);
 }
 
 async function dominationsRequest(

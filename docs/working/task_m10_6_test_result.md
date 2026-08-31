@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: 로컬 release 검증 및 Google OAuth Preview 재배포·인프라 검증 완료, 실계정 검증 대기
+- 상태: upstream 인증 단계 진단 패치 로컬 release 검증 완료, Preview 재배포 진행중
 - 작성자: Codex
 - 범위: offline Google OAuth, 암호화 server session, rolling TTL, DomiNations 재연결, 기존 claim 회귀
 
@@ -27,7 +27,7 @@
 | --- | --- | --- |
 | `pnpm lint` | 통과 | ESLint 오류 없음 |
 | `pnpm typecheck` | 통과 | TypeScript 오류 없음 |
-| `pnpm test` | 통과 | 15 files, 59 tests |
+| `pnpm test` | 통과 | 15 files, 62 tests |
 | `pnpm test:integration` | 통과 | 3 files, 13 tests |
 | `pnpm build` | 통과 | dashboard, auth 4개, claim 2개, system 3개 Route Handler |
 | `pnpm audit --prod` | 통과 | 알려진 production 취약점 0 |
@@ -84,4 +84,14 @@
 - Preview에서 로그인 후 cookie/Redis rolling TTL과 logout 삭제
 - 실제 `Free Legendary Token` 버튼 수령
 
-Google OAuth client 2개 환경 변수 설정과 Preview 재배포는 완료했습니다. 위 항목은 작업지시자의 브라우저 Google 로그인부터 수행해야 하며 실제 계정 로그인이나 DomiNations 상태 변경은 아직 수행하지 않았습니다.
+Google OAuth client 2개 환경 변수 설정과 Preview 재배포는 완료했습니다. 작업지시자의 Google 실계정 로그인은 1차 수행했지만 DomiNations session 연결과 상태 변경은 수행되지 않았습니다.
+
+## upstream 인증 단계 진단 패치
+
+실계정 1차 로그인은 Google callback까지 완료된 뒤 기존 `DOMINATIONS_AUTH_REJECTED`로 종료됐습니다. session record와 item 수령 요청은 생성되지 않았습니다.
+
+- `XSOLLA_GOOGLE_TOKEN_REJECTED`: Google access token의 Xsolla JWT 교환 거부
+- `DOMINATIONS_SIGNUP_REJECTED`: Xsolla JWT를 이용한 DomiNations signup 거부
+- `DOMINATIONS_TOKEN_REJECTED`: PKCE authorization code의 DomiNations token 교환 거부
+- server log는 고정 stage와 HTTP status만 기록하고 token, cookie, identity, upstream response body를 기록하지 않습니다.
+- 단계별 거부와 secret 미기록 단위 테스트 3개를 추가했습니다.
