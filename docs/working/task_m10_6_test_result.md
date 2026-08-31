@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: 로컬 release 검증 및 Preview 재배포·인프라 검증 완료, Google OAuth·실계정 검증 대기
+- 상태: 로컬 release 검증 및 Google OAuth Preview 재배포·인프라 검증 완료, 실계정 검증 대기
 - 작성자: Codex
 - 범위: offline Google OAuth, 암호화 server session, rolling TTL, DomiNations 재연결, 기존 claim 회귀
 
@@ -62,7 +62,7 @@
 
 ## Vercel Preview 확인
 
-- 배포 ID: `dpl_G9TRCLXB1CBbXBmBUrxJgxzpxtsX`
+- 배포 ID: `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`
 - 배포 target/status: `preview` / `Ready`
 - 고정 별칭: `https://domination-dashboard-preview.vercel.app`
 - build location과 Function region: Washington, D.C. / `iad1`
@@ -73,8 +73,8 @@
 | `GET /api/health` | `200`, `no-store` |
 | `GET /api/system/region` | `runtimeRegion=iad1`, `regionMatches=true`, `platform=vercel` |
 | `GET /api/system/outbound-country` | `countryCode=US`, `asia=false`, `targetMet=true` |
-| `GET /api/auth/google/start` | `503 AUTH_NOT_CONFIGURED`, `no-store` |
-| `POST /api/auth/session` | `503 AUTH_NOT_CONFIGURED`, `no-store` |
+| `GET /api/auth/google/start` | `307`, Google OAuth authorization endpoint로 이동 |
+| `POST /api/auth/session` | `401 AUTH_REQUIRED`, `no-store` |
 
 ## 미완료 검증
 
@@ -84,4 +84,4 @@
 - Preview에서 로그인 후 cookie/Redis rolling TTL과 logout 삭제
 - 실제 `Free Legendary Token` 버튼 수령
 
-위 항목은 Google OAuth client 2개 환경 변수 설정이 필요합니다. Preview 재배포는 완료했으며 실제 계정 로그인이나 DomiNations 상태 변경은 수행하지 않았습니다.
+Google OAuth client 2개 환경 변수 설정과 Preview 재배포는 완료했습니다. 위 항목은 작업지시자의 브라우저 Google 로그인부터 수행해야 하며 실제 계정 로그인이나 DomiNations 상태 변경은 아직 수행하지 않았습니다.

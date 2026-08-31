@@ -8,7 +8,7 @@
 
 ## 현재 단계
 
-- 현재 단계: M1.0 Issue #6 장기 Google session Preview 재배포·미국 리전 검증 완료, Google OAuth 설정 대기
+- 현재 단계: M1.0 Issue #6 Google OAuth Preview 설정·재배포·미국 리전 검증 완료, 실계정 로그인 대기
 - 승인 상태: Issue #6 계획·소스 구현·테스트·Preview 재배포 승인 완료 (2026-08-31), Production·실수령 미승인
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
@@ -40,9 +40,9 @@
 - 배포 체크리스트: `docs/working/task_m10_5_deploy_checklist.md` Preview 실행 결과 반영
 - Vercel project: `mintmd95-4401s-projects/domination-dashboard`
 - Preview 고정 별칭: `https://domination-dashboard-preview.vercel.app` (Vercel Authentication 보호)
-- Preview deployment: `dpl_G9TRCLXB1CBbXBmBUrxJgxzpxtsX`, target `preview`, Ready, `iad1`
+- Preview deployment: `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`, target `preview`, Ready, `iad1`
 - Upstash resource: `domination-dashboard-redis`, `iad1`, Free, Preview 전용, auto-upgrade 비활성
-- Preview 환경 변수: Redis 2개, `APP_SESSION_SECRET`, `APP_BASE_URL` 설정 완료
+- Preview 환경 변수: Google OAuth 2개, Redis 2개, `APP_SESSION_SECRET`, `APP_BASE_URL` 설정 완료
 - Issue #6 오늘할일: `docs/orders/20260831.md` 구현·release 검증 완료
 - Issue #6 수행계획서: `docs/plans/task_m10_6.md` 구현·release 검증 완료
 - Issue #6 구현계획서: `docs/plans/task_m10_6_impl.md` 구현·release 검증 완료
@@ -53,14 +53,14 @@
 
 ## 확인 필요
 
-- Google OAuth Web client의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`은 아직 Preview에 없습니다. `ADMIN_GOOGLE_EMAIL`은 Issue #6에서 제거했습니다.
+- Google OAuth Web client의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`은 Preview Secret으로 설정됐습니다. `ADMIN_GOOGLE_EMAIL`은 Issue #6에서 제거했습니다.
 - Google Cloud Authorized redirect URI에 `https://domination-dashboard-preview.vercel.app/api/auth/google/callback` 등록이 필요합니다.
 - Preview는 `runtimeRegion=iad1`, outbound `US`, `asia=false`, `targetMet=true`까지 확인했습니다.
 - Upstash REST 연결은 `PING -> PONG`으로 확인했습니다.
-- 현재 Vercel Preview는 Issue #6 장기 session 코드를 포함하며 고정 별칭이 `dpl_G9TRCLXB1CBbXBmBUrxJgxzpxtsX`을 가리킵니다.
+- 현재 Vercel Preview는 Issue #6 장기 session 코드와 Google OAuth 설정을 포함하며 고정 별칭이 `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`을 가리킵니다.
 - Issue #6은 unit 59개, integration 13개, lint/typecheck/build/audit를 통과했습니다.
 - Issue #2는 기술 성공 기준을 충족했지만 comment 확인 및 작업지시자의 종료 승인 전까지 닫지 않습니다.
-- Issue #3 실계정 검증에는 작업지시자 소유 Google OAuth 환경 변수와 브라우저 로그인이 필요합니다.
+- Issue #3 실계정 검증에는 작업지시자의 브라우저 Google 로그인이 필요합니다.
 - 실계정 검증 전까지 계정·상품 조회 성공을 단정하지 않고 수령 기능을 fail-closed로 유지합니다.
 - Issue #4의 Redis 선행 조건은 충족했으며 실제 session 상품 검증은 아직 필요합니다.
 - 실제 수령은 mock 외에는 실행하지 않았고 사용자 버튼 전까지 자동 실행 경로가 없습니다.
