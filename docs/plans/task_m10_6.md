@@ -4,7 +4,7 @@
 
 ## 상태
 
-- 상태: 구현·release 검증 완료, Preview 재배포 승인 대기
+- 상태: 구현·release 검증 및 Preview 재배포 완료, Google OAuth·실계정 검증 대기
 - 작성자: Codex
 - 범위: 로그인한 Google 계정을 DomiNations 연결 주체로 사용하고 refresh token 기반 장기 session 제공
 
@@ -46,7 +46,7 @@
 3. session 생성·조회·rolling 연장·삭제와 Domi credential 재연결을 구현합니다.
 4. dashboard, audit, claim, logout 경로를 async server session resolver로 전환합니다.
 5. mock 외부 요청과 Redis adapter를 단위·통합 테스트합니다.
-6. 전체 release 검증과 문서 갱신 후 Preview 배포 승인을 요청합니다.
+6. 전체 release 검증과 문서 갱신 후 승인된 Preview에 재배포하고 미국 리전·fail-closed 동작을 검증합니다.
 
 ## 위험 및 대응
 

@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: Preview 인프라 배포·검증 완료, Issue #6 장기 session 재배포와 Google OAuth·실계정 수용 검증 대기
+- 상태: Issue #6 장기 session Preview 재배포·인프라 검증 완료, Google OAuth·실계정 수용 검증 대기
 - 작성자: Codex
 - 작성일: 2026-08-28
 - 실행일: 2026-08-31
@@ -12,7 +12,7 @@
 
 ## 승인 경계
 
-작업지시자는 2026-08-31 Vercel Preview 배포를 승인했습니다. 승인에 따라 project 연결, Preview 배포, 무료 Upstash 연결, 자동 생성 가능한 Preview 환경 변수를 설정했습니다.
+작업지시자는 2026-08-31 Vercel Preview 배포와 Issue #6 재배포를 승인했습니다. 승인에 따라 project 연결, Preview 배포, 무료 Upstash 연결, 자동 생성 가능한 Preview 환경 변수를 설정하고 장기 session 코드를 고정 Preview 별칭에 반영했습니다.
 
 Google Cloud OAuth client 생성·비밀값 입력, 실계정 로그인, 실제 무료 item 수령, Production 설정·재배포는 이 승인으로 수행하지 않습니다.
 
@@ -94,15 +94,16 @@ Production custom domain 또는 Vercel domain이 확정되면 해당 callback도
 
 | 항목 | 결과 |
 | --- | --- |
-| Preview deployment | Ready, target `preview`, Vercel Authentication 보호 |
+| Preview deployment | `dpl_G9TRCLXB1CBbXBmBUrxJgxzpxtsX`, Ready, target `preview`, Vercel Authentication 보호 |
 | `/api/health` | `200`, `no-store` |
 | `/api/system/region` | `runtimeRegion=iad1`, `platform=vercel`, `regionMatches=true` |
 | `/api/system/outbound-country` | `countryCode=US`, `asia=false`, `targetMet=true` |
 | Upstash | Free Preview resource, `PING -> PONG` |
 | Google 미설정 경로 | `/api/auth/google/start`가 `503 AUTH_NOT_CONFIGURED`, `no-store` |
+| session keep-alive 미설정 경로 | `POST /api/auth/session`이 `503 AUTH_NOT_CONFIGURED`, `no-store` |
 | 실계정·실수령 | 미실행 |
 
-Issue #6 재배포 후에는 refresh token 필수 수신, opaque cookie, 180일 Redis rolling TTL, dashboard keep-alive, logout Redis 삭제를 추가로 확인합니다.
+Issue #6 재배포는 2026-08-31 완료됐고 고정 별칭 `https://domination-dashboard-preview.vercel.app`이 새 Preview를 가리킵니다. Google OAuth 변수를 설정한 뒤 refresh token 필수 수신, opaque cookie, 180일 Redis rolling TTL, dashboard keep-alive, logout Redis 삭제를 추가로 확인합니다.
 
 ## 7. Production 전환
 
