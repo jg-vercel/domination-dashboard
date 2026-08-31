@@ -4,7 +4,7 @@
 
 ## 상태
 
-- 상태: 진행중
+- 상태: 구현·release 검증 완료, Preview 재배포 승인 대기
 - 작성자: Codex
 - 범위: 인증 config·Google adapter·Redis session store·Route Handler·dashboard 전환
 

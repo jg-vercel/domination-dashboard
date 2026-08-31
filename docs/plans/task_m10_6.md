@@ -4,7 +4,7 @@
 
 ## 상태
 
-- 상태: 진행중
+- 상태: 구현·release 검증 완료, Preview 재배포 승인 대기
 - 작성자: Codex
 - 범위: 로그인한 Google 계정을 DomiNations 연결 주체로 사용하고 refresh token 기반 장기 session 제공
 

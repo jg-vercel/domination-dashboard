@@ -8,21 +8,22 @@
 
 ## 현재 단계
 
-- 현재 단계: M1.0 Vercel Preview 인프라 검증 완료, Google OAuth·실계정 수용 검증 대기
-- 승인 상태: Vercel Preview 배포 승인 완료 (2026-08-31)
+- 현재 단계: M1.0 Issue #6 장기 Google session 구현·release 검증 완료, Preview 재배포 승인 대기
+- 승인 상태: Issue #6 계획·소스 구현·테스트 승인 완료 (2026-08-31), 재배포 미승인
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
 - Git remote: `origin`
 - 원격 저장소: `https://github.com/jg-vercel/domination-dashboard.git`
-- 원격 상태: 접근 가능, `local/task5` push 완료 및 Vercel Git 연결 완료
+- 원격 상태: 접근 가능, `local/task6` push 완료 및 Vercel Git 연결 완료
 - Milestone: `M1.0 - DomiNations 무료 아이템 수령 대시보드 MVP` (#1)
-- 등록 Issue: #1, #2, #3, #4, #5
+- 등록 Issue: #1, #2, #3, #4, #5, #6
 - 완료 Issue: `#1 [조사] DomiNations World Google 세션 및 무료 토큰 수령 흐름 검증`
 - 배포 검증 완료·종료 승인 대기 Issue: `#2 [기반] 신규 대시보드와 Vercel 미국 리전 PoC 구축`
 - 진행 Issue: `#3 [연동] Google 로그인과 게임 계정 3개 조회 구현`
 - 진행 Issue: `#4 [기능] Free Legendary Token 3계정 일괄 수령 구현`
 - 진행 Issue: `#5 [UI/배포] 수령 상태 대시보드·재시도·Vercel 배포`
-- 현재 브랜치: `local/task5`
+- 진행 Issue: `#6 [인증] Google 장기 로그인과 서버 세션 전환`
+- 현재 브랜치: `local/task6`
 - 오늘할일: `docs/orders/20260828.md` Issue #2~#5 로컬 항목 완료
 - 수행계획서: `docs/plans/task_m10_2.md` 구현·로컬 검증 완료
 - 구현계획서: `docs/plans/task_m10_2_impl.md` 구현·로컬 검증 완료
@@ -42,15 +43,22 @@
 - Preview deployment: `dpl_99RgeYD5GAJ7wMVq8ohCNFD42uwV`, Ready, `iad1`
 - Upstash resource: `domination-dashboard-redis`, `iad1`, Free, Preview 전용, auto-upgrade 비활성
 - Preview 환경 변수: Redis 2개, `APP_SESSION_SECRET`, `APP_BASE_URL` 설정 완료
+- Issue #6 오늘할일: `docs/orders/20260831.md` 구현·release 검증 완료
+- Issue #6 수행계획서: `docs/plans/task_m10_6.md` 구현·release 검증 완료
+- Issue #6 구현계획서: `docs/plans/task_m10_6_impl.md` 구현·release 검증 완료
+- Issue #6 구현 commit: `754018e`
+- Issue #6 테스트 결과: `docs/working/task_m10_6_test_result.md`
 - 기술 조사: `docs/tech/task_m10_1_integration_research.md` 완료
 - 최종 보고서: `docs/report/task_m10_1_report.md` 완료
 
 ## 확인 필요
 
-- Google OAuth Web client의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ADMIN_GOOGLE_EMAIL`은 아직 Preview에 없습니다.
+- Google OAuth Web client의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`은 아직 Preview에 없습니다. `ADMIN_GOOGLE_EMAIL`은 Issue #6에서 제거했습니다.
 - Google Cloud Authorized redirect URI에 `https://domination-dashboard-preview.vercel.app/api/auth/google/callback` 등록이 필요합니다.
 - Preview는 `runtimeRegion=iad1`, outbound `US`, `asia=false`, `targetMet=true`까지 확인했습니다.
 - Upstash REST 연결은 `PING -> PONG`으로 확인했습니다.
+- 현재 Vercel Preview는 Issue #5 commit 기반이며 Issue #6 `754018e`는 아직 재배포하지 않았습니다.
+- Issue #6은 unit 59개, integration 13개, lint/typecheck/build/audit를 통과했습니다.
 - Issue #2는 기술 성공 기준을 충족했지만 comment 확인 및 작업지시자의 종료 승인 전까지 닫지 않습니다.
 - Issue #3 실계정 검증에는 작업지시자 소유 Google OAuth 환경 변수와 브라우저 로그인이 필요합니다.
 - 실계정 검증 전까지 계정·상품 조회 성공을 단정하지 않고 수령 기능을 fail-closed로 유지합니다.

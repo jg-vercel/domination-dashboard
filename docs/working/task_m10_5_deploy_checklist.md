@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: Preview 인프라 배포·검증 완료, Google OAuth·실계정 수용 검증 대기
+- 상태: Preview 인프라 배포·검증 완료, Issue #6 장기 session 재배포와 Google OAuth·실계정 수용 검증 대기
 - 작성자: Codex
 - 작성일: 2026-08-28
 - 실행일: 2026-08-31
@@ -57,7 +57,6 @@ Git 연결만으로 자동 Production 배포가 시작되지 않도록 Productio
 | --- | --- | --- | --- |
 | `GOOGLE_CLIENT_ID` | 입력 대기 | 미설정 | 제한 정보 |
 | `GOOGLE_CLIENT_SECRET` | 입력 대기 | 미설정 | 예 |
-| `ADMIN_GOOGLE_EMAIL` | 입력 대기 | 미설정 | 개인정보 |
 | `APP_SESSION_SECRET` | 설정 완료 | 미설정 | 예, 최소 32자 |
 | `APP_BASE_URL` | `https://domination-dashboard-preview.vercel.app` | 미설정 | 아니오 |
 | `UPSTASH_REDIS_REST_URL` | 설정 완료 | 미설정 | 제한 정보 |
@@ -83,8 +82,8 @@ Production custom domain 또는 Vercel domain이 확정되면 해당 callback도
 2. `/api/system/region`이 `runtimeRegion=iad1`, `platform=vercel`인지 확인합니다.
 3. `/api/system/outbound-country`가 `countryCode=US`, `asia=false`, `targetMet=true`인지 확인합니다.
 4. 비로그인 dashboard에서 계정·수령 버튼이 차단되는지 확인합니다.
-5. 허용되지 않은 Google 계정이 `ADMIN_NOT_ALLOWED`로 거부되는지 확인합니다.
-6. 관리자 Google 계정으로 로그인하고 게임 계정 3개의 name/마스킹 ID가 서로 다른지 확인합니다.
+5. 로그인한 Google subject가 자신의 server session과 audit namespace를 사용하는지 확인합니다.
+6. Google 계정으로 로그인하고 게임 계정 3개의 name/마스킹 ID가 서로 다른지 확인합니다.
 7. 세 계정 모두 exact `Free Legendary Token`, Web Specials, free, SKU/offer, stock 상태가 확인되는지 검토합니다.
 8. 실제 수령 전 dashboard와 공식 Web Store를 나란히 확인합니다.
 9. 작업지시자가 dashboard 버튼을 1회 누릅니다.
@@ -102,6 +101,8 @@ Production custom domain 또는 Vercel domain이 확정되면 해당 callback도
 | Upstash | Free Preview resource, `PING -> PONG` |
 | Google 미설정 경로 | `/api/auth/google/start`가 `503 AUTH_NOT_CONFIGURED`, `no-store` |
 | 실계정·실수령 | 미실행 |
+
+Issue #6 재배포 후에는 refresh token 필수 수신, opaque cookie, 180일 Redis rolling TTL, dashboard keep-alive, logout Redis 삭제를 추가로 확인합니다.
 
 ## 7. Production 전환
 

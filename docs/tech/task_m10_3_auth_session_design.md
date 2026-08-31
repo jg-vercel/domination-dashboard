@@ -1,5 +1,7 @@
 # Issue #3 인증·session 설계
 
+> 후속 변경: 이 문서의 12시간 cookie session과 관리자 email allowlist는 Issue #6의 `docs/tech/task_m10_6_long_session_design.md`로 대체됐습니다. 아래 내용은 2026-08-28 당시 설계 기록으로 보존합니다.
+
 ## 상태
 
 - 상태: 승인 완료
