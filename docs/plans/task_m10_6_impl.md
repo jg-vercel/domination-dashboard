@@ -4,7 +4,7 @@
 
 ## 상태
 
-- 상태: upstream 인증 단계 진단 패치 release 검증 완료, Preview 재배포 진행중
+- 상태: upstream 인증 단계 진단 패치 Preview 배포 완료, 실계정 재검증 대기
 - 작성자: Codex
 - 범위: 인증 config·Google adapter·Redis session store·Route Handler·dashboard 전환
 

@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: upstream 인증 단계 진단 패치 로컬 release 검증 완료, Preview 재배포 진행중
+- 상태: upstream 인증 단계 진단 패치 로컬 release·Preview 배포 검증 완료, 실계정 재검증 대기
 - 작성자: Codex
 - 범위: offline Google OAuth, 암호화 server session, rolling TTL, DomiNations 재연결, 기존 claim 회귀
 
@@ -62,7 +62,7 @@
 
 ## Vercel Preview 확인
 
-- 배포 ID: `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`
+- 배포 ID: `dpl_Cwk28KFdUJps2UZE9jHpfQgmxXPi`
 - 배포 target/status: `preview` / `Ready`
 - 고정 별칭: `https://domination-dashboard-preview.vercel.app`
 - build location과 Function region: Washington, D.C. / `iad1`

@@ -8,7 +8,7 @@
 
 ## 현재 단계
 
-- 현재 단계: M1.0 Issue #6 upstream 인증 단계 진단 패치 release 검증 완료, Preview 재배포 진행중
+- 현재 단계: M1.0 Issue #6 upstream 인증 단계 진단 패치 Preview 배포 완료, 실계정 재검증 대기
 - 승인 상태: Issue #6 계획·소스 구현·테스트·Preview 재배포 승인 완료 (2026-08-31), Production·실수령 미승인
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`
 - Git 호스트: GitHub
@@ -40,7 +40,7 @@
 - 배포 체크리스트: `docs/working/task_m10_5_deploy_checklist.md` Preview 실행 결과 반영
 - Vercel project: `mintmd95-4401s-projects/domination-dashboard`
 - Preview 고정 별칭: `https://domination-dashboard-preview.vercel.app` (Vercel Authentication 보호)
-- Preview deployment: `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`, target `preview`, Ready, `iad1`
+- Preview deployment: `dpl_Cwk28KFdUJps2UZE9jHpfQgmxXPi`, target `preview`, Ready, `iad1`
 - Upstash resource: `domination-dashboard-redis`, `iad1`, Free, Preview 전용, auto-upgrade 비활성
 - Preview 환경 변수: Google OAuth 2개, Redis 2개, `APP_SESSION_SECRET`, `APP_BASE_URL` 설정 완료
 - Issue #6 오늘할일: `docs/orders/20260831.md` 구현·release 검증 완료
@@ -57,7 +57,7 @@
 - Google Cloud Authorized redirect URI에 `https://domination-dashboard-preview.vercel.app/api/auth/google/callback` 등록이 필요합니다.
 - Preview는 `runtimeRegion=iad1`, outbound `US`, `asia=false`, `targetMet=true`까지 확인했습니다.
 - Upstash REST 연결은 `PING -> PONG`으로 확인했습니다.
-- 현재 Vercel Preview는 Issue #6 장기 session 코드와 Google OAuth 설정을 포함하며 고정 별칭이 `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`을 가리킵니다.
+- 현재 Vercel Preview는 Issue #6 장기 session·Google OAuth·인증 단계 진단 패치를 포함하며 고정 별칭이 `dpl_Cwk28KFdUJps2UZE9jHpfQgmxXPi`을 가리킵니다.
 - Issue #6은 unit 62개, integration 13개, lint/typecheck/build/audit를 통과했습니다.
 - 실계정 1차 로그인에서 기존 `DOMINATIONS_AUTH_REJECTED`가 확인됐고 session 저장·item 수령은 실행되지 않았습니다.
 - 진단 패치는 Xsolla Google token, DomiNations signup, DomiNations token 거부를 분리하며 stage·HTTP status 외 민감정보를 기록하지 않습니다.

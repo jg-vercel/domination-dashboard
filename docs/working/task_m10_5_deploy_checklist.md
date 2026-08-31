@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: Google OAuth Preview 설정·재배포·인프라 검증 완료, 실계정 수용 검증 대기
+- 상태: upstream 인증 단계 진단 패치 Preview 배포·인프라 검증 완료, 실계정 재검증 대기
 - 작성자: Codex
 - 작성일: 2026-08-28
 - 실행일: 2026-08-31
@@ -94,7 +94,7 @@ Production custom domain 또는 Vercel domain이 확정되면 해당 callback도
 
 | 항목 | 결과 |
 | --- | --- |
-| Preview deployment | `dpl_CWcaf5nfM63YdVz4ubWNkUPK24bs`, Ready, target `preview`, Vercel Authentication 보호 |
+| Preview deployment | `dpl_Cwk28KFdUJps2UZE9jHpfQgmxXPi`, Ready, target `preview`, Vercel Authentication 보호 |
 | `/api/health` | `200`, `no-store` |
 | `/api/system/region` | `runtimeRegion=iad1`, `platform=vercel`, `regionMatches=true` |
 | `/api/system/outbound-country` | `countryCode=US`, `asia=false`, `targetMet=true` |
