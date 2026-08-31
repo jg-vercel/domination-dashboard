@@ -23,3 +23,4 @@
 *.log
 pnpm-debug.log*
 *.tsbuildinfo
+.vercel

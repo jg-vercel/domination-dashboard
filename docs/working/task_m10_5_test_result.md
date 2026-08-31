@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: release 검증 승인 완료, 실제 Vercel 배포 대기
+- 상태: release 및 Vercel Preview 인프라 검증 완료, Google OAuth·실계정 검증 대기
 - 작성자: Codex
 - 범위: 감사 기록, 재시도 UX, 전체 애플리케이션 release 품질·보안 검사
 
@@ -20,6 +20,8 @@
 - release runtime: Node.js `24.20.0`
 - package manager: pnpm `11.24.0`
 - Vercel CLI metadata 확인: `59.9.1`
+- Vercel 실행일: 2026-08-31
+- Vercel runtime: Node.js `24.18.0`, Function `iad1`
 
 ## release 실행 결과
 
@@ -34,7 +36,10 @@
 | tracked secret pattern scan | 통과 | OAuth/Redis key/private key pattern 없음 |
 | `git ls-files '.env*'` | 통과 | `.env.example`만 추적 |
 | `git check-ignore -v .env.local` | 통과 | `.gitignore`의 `.env*` 규칙 적용 |
-| `vercel whoami` | 인증 필요 | CLI 로그아웃 상태, project·deployment 생성 없음 |
+| `vercel whoami` | 통과 | `mintmd95-4401` |
+| `vercel deploy --yes` | 통과 | 최종 Preview `dpl_99RgeYD5GAJ7wMVq8ohCNFD42uwV`, Ready |
+| Vercel remote build | 통과 | Washington, D.C. `iad1`, Next.js build 성공 |
+| Upstash REST `PING` | 통과 | Preview Free resource에서 `PONG` |
 
 ## 기능 검증
 
@@ -57,7 +62,22 @@
 
 조작 가능한 앱 브라우저가 현재 세션에 없어 시각 screenshot 회귀 테스트는 실행하지 못했습니다. HTML 의미 구조, 반응형 CSS, React Testing Library UI 테스트와 production build로 배포 전 검증을 완료했습니다.
 
-## 배포 후 필수 검증
+## Vercel Preview 검증
+
+| 검증 | 결과 |
+| --- | --- |
+| 고정 별칭 | `https://domination-dashboard-preview.vercel.app` |
+| Deployment target | `preview` |
+| Deployment protection | Vercel Authentication 302 보호, 인증 요청으로 내부 검증 |
+| `/api/health` | `200`, `no-store` |
+| `/api/system/region` | `iad1`, Vercel, region 일치 |
+| `/api/system/outbound-country` | `US`, `asia=false`, `targetMet=true` |
+| `/api/auth/google/start` | Google 변수 미설정 상태에서 `503 AUTH_NOT_CONFIGURED`, `no-store` |
+| Upstash | `iad1`, Free, Preview 전용, auto-upgrade 비활성, `PING -> PONG` |
+
+Vercel CLI `59.9.1`은 project의 첫 `vercel deploy --yes`를 명령의 `--prod` 부재와 관계없이 Production target으로 자동 지정했습니다. 최초 deployment `dpl_vxs3cSF2s6XBTKmKA9W3vsZohCFc`에는 환경 변수가 없고 인증 경로가 503으로 닫힌 것을 확인했습니다. 이어서 실제 Preview deployment를 별도로 만들었으며, Production 추가 설정이나 재배포는 수행하지 않았습니다.
+
+## 남은 실계정 검증
 
 - `iad1`, `US`, `asia=false`
 - Google 실 OAuth와 관리자 allowlist
@@ -65,4 +85,4 @@
 - exact 상품·무료·SKU·offer·stock
 - 최초 사용자 버튼 수령, 결과 audit, 동일 cycle duplicate
 
-위 검증은 실제 Vercel Preview와 작업지시자의 브라우저 상호작용이 필요합니다. 이 문서 작성 시점에는 Vercel 배포와 DomiNations 상태 변경을 수행하지 않았습니다.
+위 검증은 작업지시자 소유 Google OAuth Web client 3개 값과 브라우저 상호작용이 필요합니다. 이 문서 작성 시점에는 Vercel Preview 인프라 배포는 완료했지만 DomiNations 계정 로그인과 상태 변경은 수행하지 않았습니다.
