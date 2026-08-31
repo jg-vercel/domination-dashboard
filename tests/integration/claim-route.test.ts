@@ -6,7 +6,10 @@ import { NextRequest } from "next/server";
 import { POST as claimAll } from "@/app/api/claims/free-legendary-token/route";
 import { GET as getClaimAudits } from "@/app/api/claims/audit/route";
 import { getAuthConfig } from "@/lib/auth/config";
-import { createServerAppSession } from "@/lib/auth/server-session";
+import {
+  attachDomiNationsSession,
+  createServerAppSession,
+} from "@/lib/auth/server-session";
 import type { AuthKeyValueStore } from "@/lib/idempotency/redis-rest";
 
 const sessionSecret =
@@ -128,13 +131,18 @@ function stubAuthEnvironment() {
 
 async function createTestSession() {
   const store = new MemoryAuthStore();
-  const { session, sealedCookie } = await createServerAppSession(
+  const created = await createServerAppSession(
     {
       subject: "google-subject",
       email: "admin@example.com",
       name: "Admin",
     },
     "google-refresh-token",
+    getAuthConfig(),
+    store,
+  );
+  const { session, sealedCookie } = await attachDomiNationsSession(
+    created.sealedCookie,
     {
       accessToken: "dominations-bearer",
       cookies: ["domi=session"],
@@ -142,7 +150,7 @@ async function createTestSession() {
       xsollaId: "xsolla-1",
     },
     getAuthConfig(),
-    store,
+    { store },
   );
   return {
     sealed: sealedCookie,

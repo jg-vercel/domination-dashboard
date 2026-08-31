@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { createRandomToken } from "@/lib/auth/crypto";
 import { AuthError } from "@/lib/auth/errors";
-import type { AppSession } from "@/lib/auth/session";
+import type { AppSession, DomiNationsCredential } from "@/lib/auth/session";
 import {
   findTargetProduct,
   getProductState,
@@ -67,10 +67,15 @@ export interface ClaimServiceDependencies {
   createOwnerToken?: () => string;
 }
 
+type ConnectedAppSession = AppSession & {
+  dominations: DomiNationsCredential;
+};
+
 export async function claimFreeLegendaryTokenForAllAccounts(
   session: AppSession,
   dependencies: ClaimServiceDependencies,
 ): Promise<BatchClaimResult> {
+  requireDomiNationsSession(session);
   const fetchImplementation = dependencies.fetchImplementation ?? fetch;
   const cycle = getClaimCycle(dependencies.now);
   const createOwnerToken = dependencies.createOwnerToken ?? createRandomToken;
@@ -125,7 +130,7 @@ export async function claimFreeLegendaryTokenForAllAccounts(
 }
 
 async function claimAccount(
-  session: AppSession,
+  session: ConnectedAppSession,
   account: DomiNationsAccount,
   cycle: ClaimCycle,
   store: ClaimStore,
@@ -283,6 +288,14 @@ async function claimAccount(
     if (!purchaseSent || durableOutcomeRecorded) {
       await store.compareDelete(accountLockKey, accountOwner).catch(() => false);
     }
+  }
+}
+
+function requireDomiNationsSession(
+  session: AppSession,
+): asserts session is ConnectedAppSession {
+  if (!session.dominations) {
+    throw new AuthError("DOMINATIONS_SESSION_REQUIRED");
   }
 }
 

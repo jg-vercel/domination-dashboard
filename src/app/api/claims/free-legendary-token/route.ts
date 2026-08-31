@@ -45,9 +45,7 @@ export async function POST(request: NextRequest) {
       return errorResponse("CLAIM_STORE_NOT_CONFIGURED", 503);
     }
 
-    const initial = await resolveServerAppSession(sealedSession, config, {
-      skipReconnect: true,
-    });
+    const initial = await resolveServerAppSession(sealedSession, config);
     const csrfToken = request.headers.get("x-claim-csrf");
     if (
       !csrfToken ||
@@ -56,19 +54,27 @@ export async function POST(request: NextRequest) {
       return errorResponse("CSRF_REJECTED", 403);
     }
 
-    const resolved = await resolveServerAppSession(sealedSession, config, {
-      forceReconnect: true,
-    });
-    const result = await claimFreeLegendaryTokenForAllAccounts(resolved.session, {
-      store: createRedisClaimStore(),
-    });
+    if (!initial.session.dominations) {
+      return errorResponse("DOMINATIONS_SESSION_REQUIRED", 409);
+    }
+    let result;
+    try {
+      result = await claimFreeLegendaryTokenForAllAccounts(initial.session, {
+        store: createRedisClaimStore(),
+      });
+    } catch (error) {
+      if (asAuthError(error).code === "SESSION_EXPIRED") {
+        return errorResponse("DOMINATIONS_SESSION_REQUIRED", 409);
+      }
+      throw error;
+    }
     const response = NextResponse.json(
       { ok: true, ...result },
       { headers: noStoreHeaders },
     );
     response.cookies.set(
       APP_SESSION_COOKIE,
-      resolved.sealedCookie,
+      initial.sealedCookie,
       authCookieOptions(
         config.secureCookies,
         APP_SESSION_COOKIE_TTL_SECONDS,
@@ -93,6 +99,9 @@ export async function POST(request: NextRequest) {
     }
     if (authError.code === "ACCOUNT_COUNT_MISMATCH") {
       return errorResponse("ACCOUNT_COUNT_MISMATCH", 409);
+    }
+    if (authError.code === "DOMINATIONS_SESSION_REQUIRED") {
+      return errorResponse("DOMINATIONS_SESSION_REQUIRED", 409);
     }
     if (authError.code === "AUTH_NOT_CONFIGURED") {
       return errorResponse("CLAIM_NOT_CONFIGURED", 503);

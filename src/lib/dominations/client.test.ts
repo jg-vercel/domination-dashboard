@@ -4,6 +4,7 @@ import type { DomiNationsCredential } from "@/lib/auth/session";
 
 import {
   connectDomiNations,
+  connectDomiNationsWithXsollaToken,
   getLinkedAccounts,
   getProductsForAccount,
   listGameAccountIds,
@@ -150,6 +151,31 @@ describe("DomiNations authentication adapter", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it("connects an official Xsolla session without repeating Google exchange", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json(
+          { authcode: "domi-auth-code" },
+          { headers: { "Set-Cookie": "auth_flow=flow-cookie; Path=/" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ token: "domi-bearer", userid: "user-1", xsid: "xsolla-1" }),
+      );
+
+    await expect(
+      connectDomiNationsWithXsollaToken("official-xsolla-jwt", fetchMock),
+    ).resolves.toMatchObject({ accessToken: "domi-bearer", userId: "user-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/accounts/signup");
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("login.xsolla.com");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      jwt: "official-xsolla-jwt",
+    });
   });
 
   it("uses bearer and cookie credentials for account and product reads", async () => {

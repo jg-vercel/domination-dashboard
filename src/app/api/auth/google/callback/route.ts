@@ -15,8 +15,6 @@ import {
   readOAuthFlow,
 } from "@/lib/auth/session";
 import { createServerAppSession } from "@/lib/auth/server-session";
-import { loadAccountDirectory } from "@/lib/dashboard/snapshot";
-import { connectDomiNations } from "@/lib/dominations/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,16 +43,10 @@ export async function GET(request: NextRequest) {
     }
 
     const google = await exchangeGoogleAuthorizationCode(config, flow, code);
-    const dominations = await connectDomiNations(google.accessToken);
-
-    // Fail closed before issuing a dashboard session if the account set is not
-    // exactly the three unique linked DomiNations accounts in scope.
-    await loadAccountDirectory(dominations);
 
     const { sealedCookie } = await createServerAppSession(
       google.identity,
       google.refreshToken,
-      dominations,
       config,
     );
     const response = NextResponse.redirect(

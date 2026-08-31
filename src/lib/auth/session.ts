@@ -34,7 +34,7 @@ export interface AppSession {
   issuedAt: number;
   expiresAt: number;
   admin: AdminIdentity;
-  dominations: DomiNationsCredential;
+  dominations: DomiNationsCredential | null;
   claimCsrfToken: string;
 }
 

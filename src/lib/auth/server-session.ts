@@ -2,12 +2,10 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import { loadAccountDirectory } from "@/lib/dashboard/snapshot";
 import {
   createRedisAuthStore,
   type AuthKeyValueStore,
 } from "@/lib/idempotency/redis-rest";
-import { connectDomiNations } from "@/lib/dominations/client";
 
 import type { AuthConfig } from "./config";
 import {
@@ -17,7 +15,6 @@ import {
   unsealPayload,
 } from "./crypto";
 import { AuthError } from "./errors";
-import { refreshGoogleAccessToken } from "./google";
 import {
   APP_SESSION_IDLE_TTL_SECONDS,
   createAppSessionPointer,
@@ -27,17 +24,16 @@ import {
   readAppSessionPointer,
 } from "./session";
 
-export const DOMINATIONS_RECONNECT_INTERVAL_SECONDS = 6 * 60 * 60;
-const SESSION_KEY_PREFIX = "auth:session:v1:";
+const SESSION_KEY_PREFIX = "auth:session:v2:";
 
 interface StoredAppSession {
   issuedAt: number;
   expiresAt: number;
   lastSeenAt: number;
-  dominationsConnectedAt: number;
+  dominationsConnectedAt: number | null;
   admin: AdminIdentity;
   googleRefreshToken: string;
-  dominations: DomiNationsCredential;
+  dominations: DomiNationsCredential | null;
   claimCsrfToken: string;
 }
 
@@ -47,22 +43,13 @@ export interface ResolvedAppSession {
 }
 
 export interface ResolveSessionOptions {
-  forceReconnect?: boolean;
-  skipReconnect?: boolean;
   nowSeconds?: number;
   store?: AuthKeyValueStore;
-  refreshAccessToken?: (
-    config: AuthConfig,
-    refreshToken: string,
-  ) => Promise<string>;
-  connectDomi?: (googleAccessToken: string) => Promise<DomiNationsCredential>;
-  validateAccounts?: (credentials: DomiNationsCredential) => Promise<unknown>;
 }
 
 export async function createServerAppSession(
   admin: AdminIdentity,
   googleRefreshToken: string,
-  dominations: DomiNationsCredential,
   config: AuthConfig,
   store: AuthKeyValueStore = createRedisAuthStore(),
   nowSeconds = Math.floor(Date.now() / 1_000),
@@ -76,10 +63,10 @@ export async function createServerAppSession(
     issuedAt: nowSeconds,
     expiresAt: nowSeconds + APP_SESSION_IDLE_TTL_SECONDS,
     lastSeenAt: nowSeconds,
-    dominationsConnectedAt: nowSeconds,
+    dominationsConnectedAt: null,
     admin,
     googleRefreshToken,
-    dominations,
+    dominations: null,
     claimCsrfToken: createRandomToken(),
   };
 
@@ -104,48 +91,44 @@ export async function resolveServerAppSession(
     throw new AuthError("SESSION_EXPIRED");
   }
 
-  let stored = readStoredSession(storedValue, config.sessionSecret, nowSeconds);
-  const reconnectDue =
-    options.skipReconnect !== true &&
-    (options.forceReconnect === true ||
-      nowSeconds - stored.dominationsConnectedAt >=
-        DOMINATIONS_RECONNECT_INTERVAL_SECONDS);
-
-  if (reconnectDue) {
-    const refresh =
-      options.refreshAccessToken ??
-      ((authConfig: AuthConfig, refreshToken: string) =>
-        refreshGoogleAccessToken(authConfig, refreshToken));
-    const connect = options.connectDomi ?? connectDomiNations;
-    const validate = options.validateAccounts ?? loadAccountDirectory;
-
-    let accessToken: string;
-    try {
-      accessToken = await refresh(config, stored.googleRefreshToken);
-    } catch (error) {
-      if (
-        error instanceof AuthError &&
-        (error.code === "GOOGLE_REFRESH_REJECTED" ||
-          error.code === "GOOGLE_REFRESH_TOKEN_MISSING")
-      ) {
-        await store.delete(getAppSessionRedisKey(pointer.sessionId)).catch(() => {});
-      }
-      throw error;
-    }
-
-    const dominations = await connect(accessToken);
-    await validate(dominations);
-    stored = {
-      ...stored,
-      dominations,
-      dominationsConnectedAt: nowSeconds,
-    };
-  }
-
-  stored = {
-    ...stored,
+  const stored: StoredAppSession = {
+    ...readStoredSession(storedValue, config.sessionSecret, nowSeconds),
     expiresAt: nowSeconds + APP_SESSION_IDLE_TTL_SECONDS,
     lastSeenAt: nowSeconds,
+  };
+  await writeStoredSession(pointer.sessionId, stored, config.sessionSecret, store);
+  return toResolvedSession(
+    pointer.sessionId,
+    stored,
+    config.sessionSecret,
+    nowSeconds,
+  );
+}
+
+export async function attachDomiNationsSession(
+  sealedCookie: string,
+  dominations: DomiNationsCredential,
+  config: AuthConfig,
+  options: ResolveSessionOptions = {},
+): Promise<ResolvedAppSession> {
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1_000);
+  const store = options.store ?? createRedisAuthStore();
+  const pointer = readAppSessionPointer(
+    sealedCookie,
+    config.sessionSecret,
+    nowSeconds,
+  );
+  const storedValue = await store.get(getAppSessionRedisKey(pointer.sessionId));
+  if (!storedValue) {
+    throw new AuthError("SESSION_EXPIRED");
+  }
+
+  const stored: StoredAppSession = {
+    ...readStoredSession(storedValue, config.sessionSecret, nowSeconds),
+    expiresAt: nowSeconds + APP_SESSION_IDLE_TTL_SECONDS,
+    lastSeenAt: nowSeconds,
+    dominationsConnectedAt: nowSeconds,
+    dominations,
   };
   await writeStoredSession(pointer.sessionId, stored, config.sessionSecret, store);
   return toResolvedSession(
@@ -212,24 +195,42 @@ function readStoredSession(
   return stored;
 }
 
-function isStoredAppSession(value: StoredAppSession): boolean {
+function isStoredAppSession(value: unknown): value is StoredAppSession {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const session = value as Partial<StoredAppSession>;
   return (
-    typeof value.lastSeenAt === "number" &&
-    typeof value.dominationsConnectedAt === "number" &&
-    typeof value.googleRefreshToken === "string" &&
-    value.googleRefreshToken.length > 0 &&
-    typeof value.claimCsrfToken === "string" &&
-    value.claimCsrfToken.length >= 32 &&
-    typeof value.admin?.subject === "string" &&
-    value.admin.subject.length > 0 &&
-    typeof value.admin.email === "string" &&
-    typeof value.admin.name === "string" &&
-    typeof value.dominations?.accessToken === "string" &&
-    value.dominations.accessToken.length > 0 &&
-    Array.isArray(value.dominations.cookies) &&
-    value.dominations.cookies.every((cookie) => typeof cookie === "string") &&
-    typeof value.dominations.userId === "string" &&
-    typeof value.dominations.xsollaId === "string"
+    typeof session.issuedAt === "number" &&
+    typeof session.expiresAt === "number" &&
+    typeof session.lastSeenAt === "number" &&
+    (session.dominationsConnectedAt === null ||
+      typeof session.dominationsConnectedAt === "number") &&
+    typeof session.googleRefreshToken === "string" &&
+    session.googleRefreshToken.length > 0 &&
+    typeof session.claimCsrfToken === "string" &&
+    session.claimCsrfToken.length >= 32 &&
+    typeof session.admin?.subject === "string" &&
+    session.admin.subject.length > 0 &&
+    typeof session.admin.email === "string" &&
+    typeof session.admin.name === "string" &&
+    (session.dominations === null ||
+      isDomiNationsCredential(session.dominations))
+  );
+}
+
+function isDomiNationsCredential(value: unknown): value is DomiNationsCredential {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const credential = value as Partial<DomiNationsCredential>;
+  return (
+    typeof credential.accessToken === "string" &&
+    credential.accessToken.length > 0 &&
+    Array.isArray(credential.cookies) &&
+    credential.cookies.every((cookie) => typeof cookie === "string") &&
+    typeof credential.userId === "string" &&
+    typeof credential.xsollaId === "string"
   );
 }
 

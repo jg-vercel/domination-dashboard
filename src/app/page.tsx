@@ -4,6 +4,7 @@ import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { ClaimAllButton } from "@/components/claim-all-button";
 import { ClaimAuditList } from "@/components/claim-audit-list";
 import { SessionKeepalive } from "@/components/session-keepalive";
+import { DominationLinkPanel } from "@/components/domination-link-panel";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -39,24 +40,28 @@ export default async function Home({ searchParams }: HomeProps) {
   let snapshot: DashboardSnapshot | null = null;
   let auditEntries: ClaimAuditEntry[] = [];
   let sessionError: AuthErrorCode | null = null;
+  let bridgeBaseUrl: string | null = null;
 
   if (authReadiness.configured && redisReadiness.configured) {
     try {
       const config = getAuthConfig();
+      bridgeBaseUrl = config.baseUrl;
       const cookieStore = await cookies();
       const sealedSession = cookieStore.get(APP_SESSION_COOKIE)?.value;
       if (sealedSession) {
-        let resolved = await resolveServerAppSession(sealedSession, config);
+        const resolved = await resolveServerAppSession(sealedSession, config);
         session = resolved.session;
-        try {
-          snapshot = await loadDashboardSnapshot(session.dominations);
-        } catch (error) {
-          if (asAuthError(error).code !== "SESSION_EXPIRED") throw error;
-          resolved = await resolveServerAppSession(sealedSession, config, {
-            forceReconnect: true,
-          });
-          session = resolved.session;
-          snapshot = await loadDashboardSnapshot(session.dominations);
+        if (session.dominations) {
+          try {
+            snapshot = await loadDashboardSnapshot(session.dominations);
+          } catch (error) {
+            const code = asAuthError(error).code;
+            sessionError =
+              code === "SESSION_EXPIRED"
+                ? "DOMINATIONS_SESSION_REQUIRED"
+                : code;
+            snapshot = null;
+          }
         }
       }
     } catch (error) {
@@ -80,10 +85,12 @@ export default async function Home({ searchParams }: HomeProps) {
       .length ?? 0;
   const authError = authErrorFromRedirect || sessionError;
   const claimEnabled = Boolean(
-    session && snapshot?.ready && redisReadiness.configured,
+    session?.dominations && snapshot?.ready && redisReadiness.configured,
   );
   const claimDisabledReason = !session
     ? "Google 로그인과 계정 확인이 필요합니다."
+    : !session.dominations || !snapshot
+      ? "DomiNations 공식 로그인 세션을 연결해 주세요."
     : !snapshot?.ready
       ? "3개 계정의 exact 무료 상품 검증이 필요합니다."
       : !redisReadiness.configured
@@ -157,6 +164,13 @@ export default async function Home({ searchParams }: HomeProps) {
           </div>
         </section>
 
+        {session && bridgeBaseUrl ? (
+          <DominationLinkPanel
+            bridgeUrl={bridgeBaseUrl}
+            connected={Boolean(session.dominations) && sessionError !== "DOMINATIONS_SESSION_REQUIRED"}
+          />
+        ) : null}
+
         <section className="stats-grid" aria-label="수령 현황">
           <article className="stat-card">
             <span className="stat-icon amber">♙</span>
@@ -214,7 +228,9 @@ export default async function Home({ searchParams }: HomeProps) {
                         <strong>계정 {slot}</strong>
                         <small>
                           {authReadiness.configured
-                            ? "Google 로그인 후 자동으로 확인됩니다."
+                            ? session
+                              ? "공식 로그인 세션을 연결하면 확인됩니다."
+                              : "Google 로그인 후 연결을 시작합니다."
                             : "OAuth 환경 변수 설정이 필요합니다."}
                         </small>
                       </div>
@@ -342,6 +358,7 @@ function AuthErrorBanner({ code }: { code: string }) {
     XSOLLA_GOOGLE_TOKEN_REJECTED: "Xsolla가 Google 로그인 token을 거부했습니다.",
     DOMINATIONS_SIGNUP_REJECTED: "DomiNations World 로그인 시작 요청이 거부되었습니다.",
     DOMINATIONS_TOKEN_REJECTED: "DomiNations World session token 발급이 거부되었습니다.",
+    DOMINATIONS_SESSION_REQUIRED: "DomiNations World 공식 로그인 세션을 다시 연결해 주세요.",
     ACCOUNT_COUNT_MISMATCH: "연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
     SESSION_INVALID: "로그인 session이 올바르지 않아 삭제가 필요합니다.",
     SESSION_EXPIRED: "로그인 session이 만료되었습니다. 다시 로그인해 주세요.",

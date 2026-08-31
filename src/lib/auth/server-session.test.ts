@@ -1,13 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { AuthKeyValueStore } from "@/lib/idempotency/redis-rest";
 
 import type { AuthConfig } from "./config";
-import { AuthError } from "./errors";
 import {
+  attachDomiNationsSession,
   createServerAppSession,
   destroyServerAppSession,
-  DOMINATIONS_RECONNECT_INTERVAL_SECONDS,
   getAppSessionRedisKey,
   resolveServerAppSession,
 } from "./server-session";
@@ -63,7 +62,6 @@ describe("server-side app sessions", () => {
     const result = await createServerAppSession(
       admin,
       "raw-google-refresh-token",
-      dominations,
       config,
       store,
       1_000,
@@ -82,6 +80,7 @@ describe("server-side app sessions", () => {
     expect(result.sealedCookie).not.toContain("raw-dominations-token");
     expect(storedValue).not.toContain("raw-google-refresh-token");
     expect(storedValue).not.toContain("raw-dominations-token");
+    expect(result.session.dominations).toBeNull();
     expect(store.writes[0]?.ttl).toBe(APP_SESSION_IDLE_TTL_SECONDS);
   });
 
@@ -90,7 +89,6 @@ describe("server-side app sessions", () => {
     const created = await createServerAppSession(
       admin,
       "google-refresh-token",
-      dominations,
       config,
       store,
       1_000,
@@ -107,62 +105,60 @@ describe("server-side app sessions", () => {
     expect(store.writes.at(-1)?.ttl).toBe(APP_SESSION_IDLE_TTL_SECONDS);
   });
 
-  it("refreshes Google and reconnects DomiNations when the credential is due", async () => {
+  it("attaches DomiNations credentials without exposing them to the browser", async () => {
     const store = new MemoryAuthStore();
     const created = await createServerAppSession(
       admin,
       "google-refresh-token",
-      dominations,
       config,
       store,
       1_000,
     );
-    const refresh = vi.fn().mockResolvedValue("renewed-google-access-token");
-    const reconnect = vi.fn().mockResolvedValue({
-      ...dominations,
-      accessToken: "renewed-dominations-token",
-    });
-    const validate = vi.fn().mockResolvedValue({ accountCount: 3 });
 
-    const resolved = await resolveServerAppSession(created.sealedCookie, config, {
-      store,
-      nowSeconds: 1_000 + DOMINATIONS_RECONNECT_INTERVAL_SECONDS,
-      refreshAccessToken: refresh,
-      connectDomi: reconnect,
-      validateAccounts: validate,
-    });
-
-    expect(refresh).toHaveBeenCalledWith(config, "google-refresh-token");
-    expect(reconnect).toHaveBeenCalledWith("renewed-google-access-token");
-    expect(validate).toHaveBeenCalledOnce();
-    expect(resolved.session.dominations.accessToken).toBe(
-      "renewed-dominations-token",
+    const attached = await attachDomiNationsSession(
+      created.sealedCookie,
+      dominations,
+      config,
+      {
+        store,
+        nowSeconds: 1_100,
+      },
     );
+    const pointer = readAppSessionPointer(
+      attached.sealedCookie,
+      config.sessionSecret,
+      1_101,
+    );
+    const storedValue = store.values.get(getAppSessionRedisKey(pointer.sessionId))!;
+
+    expect(attached.session.dominations).toEqual(dominations);
+    expect(attached.sealedCookie).not.toContain("raw-dominations-token");
+    expect(storedValue).not.toContain("raw-dominations-token");
   });
 
-  it("deletes the server session when Google revokes the refresh token", async () => {
+  it("keeps an attached DomiNations session during normal activity", async () => {
     const store = new MemoryAuthStore();
     const created = await createServerAppSession(
       admin,
-      "revoked-refresh-token",
-      dominations,
+      "google-refresh-token",
       config,
       store,
       1_000,
     );
+    const attached = await attachDomiNationsSession(
+      created.sealedCookie,
+      dominations,
+      config,
+      { store, nowSeconds: 1_010 },
+    );
 
-    await expect(
-      resolveServerAppSession(created.sealedCookie, config, {
-        store,
-        nowSeconds: 1_100,
-        forceReconnect: true,
-        refreshAccessToken: vi
-          .fn()
-          .mockRejectedValue(new AuthError("GOOGLE_REFRESH_REJECTED")),
-      }),
-    ).rejects.toMatchObject({ code: "GOOGLE_REFRESH_REJECTED" });
-    expect(store.values.size).toBe(0);
-    expect(store.deletes).toHaveLength(1);
+    const resolved = await resolveServerAppSession(attached.sealedCookie, config, {
+      store,
+      nowSeconds: 1_100,
+    });
+
+    expect(resolved.session.dominations).toEqual(dominations);
+    expect(resolved.session.admin).toEqual(admin);
   });
 
   it("removes the Redis record during logout", async () => {
@@ -170,7 +166,6 @@ describe("server-side app sessions", () => {
     const created = await createServerAppSession(
       admin,
       "google-refresh-token",
-      dominations,
       config,
       store,
     );

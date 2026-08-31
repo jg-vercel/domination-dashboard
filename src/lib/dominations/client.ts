@@ -50,6 +50,13 @@ export async function connectDomiNations(
     googleAccessToken,
     fetchImplementation,
   );
+  return connectDomiNationsWithXsollaToken(xsollaToken, fetchImplementation);
+}
+
+export async function connectDomiNationsWithXsollaToken(
+  xsollaToken: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<DomiNationsCredential> {
   const pkce = createPkcePair();
   const clientId = createRandomToken(32);
   let cookies: string[] = [];

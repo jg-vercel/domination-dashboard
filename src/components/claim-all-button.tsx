@@ -73,6 +73,15 @@ export function ClaimAllButton({
       });
       const payload: unknown = await response.json();
       if (!response.ok || !isClaimResponse(payload)) {
+        const code = readErrorCode(payload);
+        if (code === "DOMINATIONS_SESSION_REQUIRED") {
+          setState({
+            status: "error",
+            message: "DomiNations 공식 로그인 세션이 만료되었습니다. 위 연결 절차를 다시 진행해 주세요.",
+          });
+          router.refresh();
+          return;
+        }
         throw new Error("claim failed");
       }
 
@@ -127,6 +136,14 @@ export function ClaimAllButton({
       )}
     </div>
   );
+}
+
+function readErrorCode(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const error = (value as Record<string, unknown>).error;
+  if (typeof error !== "object" || error === null || Array.isArray(error)) return null;
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" ? code : null;
 }
 
 function isClaimResponse(value: unknown): value is ClaimResponse {
