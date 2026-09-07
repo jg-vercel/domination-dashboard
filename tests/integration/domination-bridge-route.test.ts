@@ -151,7 +151,7 @@ function createBridgeFetch(redisValues: Map<string, string>) {
       });
     }
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: ["account-1", "account-2", "account-3"] });
+      return Response.json({ gameIds: { "account-1": {}, "account-2": {}, "account-3": {} } });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({

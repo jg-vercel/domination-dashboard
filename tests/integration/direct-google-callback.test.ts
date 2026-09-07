@@ -140,7 +140,7 @@ function setupCallback(rejectStore = false) {
       case "/api/accounts/token":
         return Response.json({ token: "callback-domi-token", userid: "domi-user", xsid: "xsolla-user" });
       case "/api/gameident/dom/list":
-        return Response.json({ gameIds: ["account-1", "account-2", "account-3"] });
+        return Response.json({ gameIds: { "account-1": {}, "account-2": {}, "account-3": {} } });
       case "/api/dominations/linked_user_info":
         return Response.json({ accounts: ["account-1", "account-2", "account-3"].map((gameAccountId) => ({ gameAccountId, name: gameAccountId })) });
       default:

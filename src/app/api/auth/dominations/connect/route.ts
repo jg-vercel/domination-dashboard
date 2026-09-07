@@ -48,10 +48,17 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof RedisStoreError) {
+      console.warn("Store connection failed", { code: "SESSION_STORE_UNAVAILABLE" });
       return errorResponse("SESSION_STORE_UNAVAILABLE", 503);
     }
-    const { code } = asAuthError(error);
+    const { code, diagnostic } = asAuthError(error);
+    // Only fixed error codes and allowlisted diagnostics; never log the cause,
+    // upstream response body, credentials, or account identifiers.
+    console.warn("Store connection failed", { code, ...diagnostic });
     if (code === "SESSION_INVALID" || code === "SESSION_EXPIRED") {
+      if (diagnostic) {
+        return errorResponse("DOMINATIONS_SESSION_REQUIRED", 401, diagnostic.stage);
+      }
       return errorResponse("AUTH_REQUIRED", 401);
     }
     if (code === "GOOGLE_REFRESH_REJECTED" || code === "GOOGLE_REFRESH_TOKEN_MISSING") {
@@ -59,13 +66,13 @@ export async function POST(request: NextRequest) {
     }
     if (code === "ACCOUNT_COUNT_MISMATCH") return errorResponse(code, 409);
     if (code === "AUTH_NOT_CONFIGURED") return errorResponse(code, 503);
-    return errorResponse(code, 502);
+    return errorResponse(code, 502, diagnostic?.stage);
   }
 }
 
-function errorResponse(code: string, status: number) {
+function errorResponse(code: string, status: number, stage?: string) {
   return NextResponse.json(
-    { ok: false, error: { code } },
+    { ok: false, error: { code, ...(stage ? { stage } : {}) } },
     { status, headers: noStoreHeaders },
   );
 }

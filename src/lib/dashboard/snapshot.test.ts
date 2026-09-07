@@ -46,17 +46,36 @@ describe("dashboard snapshot", () => {
     expect(JSON.stringify(snapshot)).not.toContain("dominations-bearer");
     expect(JSON.stringify(snapshot)).not.toContain("free-token-sku");
   });
+
+  it.each([
+    ["AdditionalSpecials", true],
+    ["Marquee", false],
+    ["WEB_SPECIALS", false],
+    ["Web Specials", false],
+  ])("verifies the official Web Specials tag %s: %s", async (sectionTag, verified) => {
+    const snapshot = await loadDashboardSnapshot(
+      credentials,
+      createDashboardFetch({ sectionTag }),
+    );
+
+    expect(snapshot.accounts[0]?.product).toMatchObject({
+      sectionVerified: verified,
+      state: verified ? "available" : "unverified",
+    });
+  });
 });
 
 function createDashboardFetch({
   listedIds = accountIds,
+  sectionTag = "AdditionalSpecials",
 }: {
   listedIds?: string[];
+  sectionTag?: string;
 } = {}): typeof fetch {
   return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: listedIds });
+      return Response.json({ gameIds: Object.fromEntries(listedIds.map((id) => [id, {}])) });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({
@@ -83,7 +102,7 @@ function createDashboardFetch({
       disabled: false,
       locked: false,
       refresh: index === 1 ? 3_600 : 0,
-      tags: index === 2 ? [] : ["WEB_SPECIALS"],
+      tags: index === 2 ? [] : [sectionTag],
       stockAvailable: index === 1 ? 0 : 1,
     };
     return Response.json(JSON.stringify([baseProduct]));

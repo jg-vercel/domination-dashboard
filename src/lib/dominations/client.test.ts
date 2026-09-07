@@ -286,7 +286,9 @@ describe("DomiNations authentication adapter", () => {
       expect(headers.get("Cookie")).toBe("domi_cookie=session-value");
 
       if (url.endsWith("/api/gameident/dom/list")) {
-        return Response.json({ gameIds: ["account-1", "account-2", "account-3"] });
+        return Response.json({
+          gameIds: { "account-1": {}, "account-2": {}, "account-3": {} },
+        });
       }
       if (url.endsWith("/api/dominations/linked_user_info")) {
         return Response.json({
@@ -306,7 +308,7 @@ describe("DomiNations authentication adapter", () => {
             is_free: true,
             stockAvailable: 1,
             stockMax: 1,
-            tags: ["WEB_SPECIALS"],
+            tags: ["AdditionalSpecials"],
           },
         ]),
       );
@@ -337,6 +339,94 @@ describe("DomiNations authentication adapter", () => {
     ).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
   });
 
+  it("reads game account IDs from the official dictionary response", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        gameIds: { "account-1": {}, "account-2": {}, "account-3": {} },
+      }),
+    );
+
+    await expect(listGameAccountIds(credentials, fetchMock)).resolves.toEqual([
+      "account-1", "account-2", "account-3",
+    ]);
+  });
+
+  it("retains compatibility with a valid legacy account ID array", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ gameIds: ["account-1", "account-2", "account-3"] }),
+    );
+
+    await expect(listGameAccountIds(credentials, fetchMock)).resolves.toEqual([
+      "account-1", "account-2", "account-3",
+    ]);
+  });
+
+  it.each([{}, []])("returns an empty account list for a valid empty container (%j)", async (gameIds) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ gameIds }));
+
+    await expect(listGameAccountIds(credentials, fetchMock)).resolves.toEqual([]);
+  });
+
+  it.each([
+    { description: "a missing dictionary", gameIds: undefined },
+    { description: "a null dictionary", gameIds: null },
+    { description: "a string dictionary", gameIds: "account-1" },
+    { description: "a numeric dictionary", gameIds: 1 },
+    { description: "a boolean dictionary", gameIds: true },
+    { description: "an empty dictionary key", gameIds: { "": {} } },
+    { description: "a whitespace-only dictionary key", gameIds: { "   ": {} } },
+    { description: "a null dictionary value", gameIds: { "account-1": null } },
+    { description: "an array dictionary value", gameIds: { "account-1": [] } },
+    { description: "a string dictionary value", gameIds: { "account-1": "data" } },
+    { description: "a numeric dictionary value", gameIds: { "account-1": 1 } },
+    { description: "a boolean dictionary value", gameIds: { "account-1": true } },
+    { description: "an empty array ID", gameIds: ["account-1", ""] },
+    { description: "a whitespace-only array ID", gameIds: ["account-1", "   "] },
+    { description: "a numeric array ID", gameIds: ["account-1", 1] },
+    { description: "a null array ID", gameIds: ["account-1", null] },
+    { description: "an object array ID", gameIds: ["account-1", {}] },
+  ])("rejects $description instead of silently filtering IDs", async ({ gameIds }) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ gameIds }));
+
+    await expect(listGameAccountIds(credentials, fetchMock)).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+    });
+  });
+
+  it.each([
+    { description: "null", price: null },
+    { description: "missing", price: undefined },
+    { description: "empty", price: "" },
+    { description: "whitespace-only", price: " \t\n " },
+    { description: "false", price: false },
+    { description: "true", price: true },
+    { description: "an array", price: [] },
+    { description: "an object", price: {} },
+  ])("does not normalize $description price into a free product", async ({ price }) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json([
+      { name: "Free Legendary Token", google: "token-sku", offerId: "token-offer", price },
+    ]));
+
+    const [product] = await getProductsForAccount(credentials, "account-1", fetchMock);
+
+    expect(product).toMatchObject({ price: null, isFree: false });
+    const purchaseFetch = vi.fn<typeof fetch>();
+    await expect(
+      startFreePurchase(credentials, "account-1", product!, purchaseFetch),
+    ).rejects.toMatchObject({ code: "PURCHASE_NOT_ELIGIBLE" });
+    expect(purchaseFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([0, "0", " 0 "])("preserves an explicitly zero price (%j)", async (price) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json([
+      { name: "Free Legendary Token", google: "token-sku", offerId: "token-offer", price },
+    ]));
+
+    await expect(getProductsForAccount(credentials, "account-1", fetchMock)).resolves.toEqual([
+      expect.objectContaining({ price: 0 }),
+    ]);
+  });
+
   it("starts only a free purchase with the fixed safe request body", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -355,7 +445,7 @@ describe("DomiNations authentication adapter", () => {
       locked: false,
       refreshSeconds: 0,
       validUntil: null,
-      tags: ["WEB_SPECIALS"],
+      tags: ["AdditionalSpecials"],
     };
 
     await expect(
@@ -392,7 +482,7 @@ describe("DomiNations authentication adapter", () => {
       locked: false,
       refreshSeconds: 0,
       validUntil: null,
-      tags: ["WEB_SPECIALS"],
+      tags: ["AdditionalSpecials"],
     };
     const fetchMock = vi
       .fn<typeof fetch>()

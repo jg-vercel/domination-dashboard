@@ -221,7 +221,7 @@ function createClaimFetch({
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: accountIds });
+      return Response.json({ gameIds: Object.fromEntries(accountIds.map((id) => [id, {}])) });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({
@@ -269,7 +269,7 @@ function createClaimFetch({
       disabled: false,
       locked: false,
       refresh: stockAvailable === 0 ? 3_600 : 0,
-      tags: !allAvailable && index === 2 ? [] : ["WEB_SPECIALS"],
+      tags: !allAvailable && index === 2 ? [] : ["AdditionalSpecials"],
     };
     return Response.json(JSON.stringify([product]));
   });

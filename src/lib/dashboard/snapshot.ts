@@ -122,9 +122,7 @@ export function getProductState(product: StoreProduct | null): {
     };
   }
 
-  const sectionVerified = product.tags.some((tag) =>
-    tag.toUpperCase().replaceAll(/[_-]+/g, " ").includes("WEB SPECIAL"),
-  );
+  const sectionVerified = product.tags.includes("AdditionalSpecials");
   const isFree = product.isFree || product.price === 0;
   const hasStock =
     product.stockMax === 0 ||

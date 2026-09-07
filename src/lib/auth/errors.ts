@@ -18,13 +18,30 @@ export type AuthErrorCode =
   | "PAID_CHECKOUT_REJECTED"
   | "UPSTREAM_UNAVAILABLE";
 
+export interface AuthDiagnostic {
+  stage:
+    | "google_refresh"
+    | "xsolla_google_token"
+    | "dominations_signup"
+    | "dominations_token"
+    | "game_account_list"
+    | "linked_accounts"
+    | "store_products"
+    | "free_purchase";
+  status?: number;
+  reason?: "network" | "http" | "response_shape";
+}
+
 export class AuthError extends Error {
+  public readonly diagnostic?: AuthDiagnostic;
+
   constructor(
     public readonly code: AuthErrorCode,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { diagnostic?: AuthDiagnostic },
   ) {
     super(code, options);
     this.name = "AuthError";
+    this.diagnostic = options?.diagnostic;
   }
 }
 

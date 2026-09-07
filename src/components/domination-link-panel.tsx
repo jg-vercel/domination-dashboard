@@ -6,7 +6,7 @@ import { useState } from "react";
 type ConnectionState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "error"; code: string };
+  | { status: "error"; code: string; stage?: string };
 
 export function DominationLinkPanel({
   bridgeUrl,
@@ -44,6 +44,7 @@ export function DominationLinkPanel({
       setState({
         status: "error",
         code: typeof error?.code === "string" ? error.code : "UPSTREAM_UNAVAILABLE",
+        stage: typeof error?.stage === "string" ? error.stage : undefined,
       });
       router.refresh();
     } catch {
@@ -115,7 +116,7 @@ export function DominationLinkPanel({
 
       {state.status === "error" && (
         <p className="claim-error" role="alert">
-          {connectionErrorMessage(state.code)}
+          {connectionErrorMessage(state.code, state.stage)}
         </p>
       )}
       <p className="link-security-note" role="status">
@@ -131,7 +132,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function connectionErrorMessage(code: string): string {
+function connectionErrorMessage(code: string, stage?: string): string {
   const messages: Record<string, string> = {
     AUTH_REQUIRED: "대시보드 로그인이 만료되었습니다. Google 다시 로그인을 눌러 주세요.",
     GOOGLE_REFRESH_REJECTED: "Google 인증을 갱신할 수 없습니다. Google 다시 로그인을 눌러 주세요.",
@@ -139,8 +140,25 @@ function connectionErrorMessage(code: string): string {
     XSOLLA_GOOGLE_TOKEN_REJECTED: "상점 인증 서비스에서 Google 인증을 거부했습니다. 연결 요청을 확인해야 합니다.",
     DOMINATIONS_SIGNUP_REJECTED: "DomiNations 로그인 응답을 확인하지 못했습니다. 연결 요청을 확인해야 합니다.",
     DOMINATIONS_TOKEN_REJECTED: "DomiNations 상점 토큰을 발급받지 못했습니다. 연결 요청을 확인해야 합니다.",
+    DOMINATIONS_SESSION_REQUIRED: "상점에서 인증을 인정하지 않았습니다. 대시보드 로그인은 유지됩니다. Domi 연결을 다시 눌러 주세요.",
     ACCOUNT_COUNT_MISMATCH: "이 Google 계정에 연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
     SESSION_STORE_UNAVAILABLE: "로그인 저장소에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    SESSION_TOO_LARGE: "상점 인증 정보를 저장하지 못했습니다. 연결 요청을 확인해야 합니다.",
+    CSRF_REJECTED: "연결 확인 정보가 갱신되었습니다. 페이지를 새로고침한 뒤 다시 눌러 주세요.",
+    ORIGIN_REJECTED: "대시보드의 공식 Preview 주소에서 다시 연결해 주세요.",
   };
+  if (code === "UPSTREAM_UNAVAILABLE" && stage) {
+    const stages: Record<string, string> = {
+      google_refresh: "Google 인증 갱신",
+      xsolla_google_token: "상점 Google 인증",
+      dominations_signup: "DomiNations 로그인 시작",
+      dominations_token: "DomiNations 토큰 발급",
+      game_account_list: "게임 계정 목록 조회",
+      linked_accounts: "게임 계정 상세 조회",
+    };
+    if (stages[stage]) {
+      return `${stages[stage]} 단계에서 연결에 실패했습니다. 대시보드 로그인은 유지됩니다.`;
+    }
+  }
   return messages[code] ?? "상점 연결을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }

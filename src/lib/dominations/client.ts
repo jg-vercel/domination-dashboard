@@ -2,7 +2,7 @@ import "server-only";
 
 import { createPkcePair, createRandomToken } from "@/lib/auth/crypto";
 import { AuthError } from "@/lib/auth/errors";
-import type { AuthErrorCode } from "@/lib/auth/errors";
+import type { AuthDiagnostic, AuthErrorCode } from "@/lib/auth/errors";
 import type { DomiNationsCredential } from "@/lib/auth/session";
 
 export const DOMINATIONS_API_ORIGIN = "https://api.dominationsworld.com";
@@ -166,15 +166,24 @@ export async function listGameAccountIds(
     { method: "POST", body: JSON.stringify({}), domiCredentials: credentials },
     fetchImplementation,
   );
-  const payload = await readObject(response);
-
-  if (!Array.isArray(payload.gameIds)) {
+  return readAccountResponse(response, "game_account_list", (payload) => {
+    const gameIds = payload.gameIds;
+    // The official store indexes gameIds by account ID, with metadata as values.
+    if (isRecord(gameIds)) {
+      const entries = Object.entries(gameIds);
+      if (entries.every(([id, metadata]) => id.trim().length > 0 && isRecord(metadata))) {
+        return entries.map(([id]) => id);
+      }
+    }
+    // Retain compatibility with earlier array responses, without dropping bad IDs.
+    if (
+      Array.isArray(gameIds) &&
+      gameIds.every((id): id is string => typeof id === "string" && id.trim().length > 0)
+    ) {
+      return gameIds;
+    }
     throw new AuthError("UPSTREAM_UNAVAILABLE");
-  }
-
-  return payload.gameIds.filter(
-    (value): value is string => typeof value === "string" && value.length > 0,
-  );
+  });
 }
 
 export async function getLinkedAccounts(
@@ -186,13 +195,12 @@ export async function getLinkedAccounts(
     { method: "GET", domiCredentials: credentials },
     fetchImplementation,
   );
-  const payload = await readObject(response);
-
-  if (!Array.isArray(payload.accounts)) {
-    throw new AuthError("UPSTREAM_UNAVAILABLE");
-  }
-
-  return payload.accounts.map(normalizeAccount);
+  return readAccountResponse(response, "linked_accounts", (payload) => {
+    if (!Array.isArray(payload.accounts)) {
+      throw new AuthError("UPSTREAM_UNAVAILABLE");
+    }
+    return payload.accounts.map(normalizeAccount);
+  });
 }
 
 export async function getProductsForAccount(
@@ -379,7 +387,7 @@ function rejectUpstreamAuthentication(
     status,
     ...signupDetails,
   });
-  throw new AuthError(code);
+  throw new AuthError(code, { diagnostic: { stage, status } });
 }
 
 async function dominationsRequest(
@@ -405,10 +413,14 @@ async function dominationsRequest(
   );
 
   if (response.status === 401) {
-    throw new AuthError("SESSION_EXPIRED");
+    throw new AuthError("SESSION_EXPIRED", {
+      diagnostic: { stage: upstreamStage(path), status: response.status, reason: "http" },
+    });
   }
   if (!response.ok) {
-    throw new AuthError("UPSTREAM_UNAVAILABLE");
+    throw new AuthError("UPSTREAM_UNAVAILABLE", {
+      diagnostic: { stage: upstreamStage(path), status: response.status, reason: "http" },
+    });
   }
   return response;
 }
@@ -429,10 +441,45 @@ async function requestUpstream(
       signal: controller.signal,
     });
   } catch (error) {
-    throw new AuthError("UPSTREAM_UNAVAILABLE", { cause: error });
+    throw new AuthError("UPSTREAM_UNAVAILABLE", {
+      cause: error,
+      diagnostic: { stage: upstreamStage(new URL(url).pathname), reason: "network" },
+    });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function upstreamStage(path: string): AuthDiagnostic["stage"] {
+  switch (path) {
+    case "/api/social/google/login_with_token": return "xsolla_google_token";
+    case "/api/accounts/signup": return "dominations_signup";
+    case "/api/accounts/token": return "dominations_token";
+    case "/api/gameident/dom/list": return "game_account_list";
+    case "/api/dominations/linked_user_info": return "linked_accounts";
+    case "/api/xsollastore/getproducts": return "store_products";
+    case "/api/xsollastore/startpurchase": return "free_purchase";
+    default: throw new Error("Unknown upstream endpoint");
+  }
+}
+
+async function readAccountResponse<T>(
+  response: Response,
+  stage: "game_account_list" | "linked_accounts",
+  parse: (payload: Record<string, unknown>) => T,
+): Promise<T> {
+  try {
+    return parse(await readObject(response));
+  } catch (error) {
+    throw new AuthError("UPSTREAM_UNAVAILABLE", {
+      cause: error,
+      diagnostic: { stage, status: response.status, reason: "response_shape" },
+    });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function readObject(response: Response): Promise<Record<string, unknown>> {
@@ -526,6 +573,9 @@ function stringValue(value: unknown): string {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) {
+    return null;
+  }
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 }

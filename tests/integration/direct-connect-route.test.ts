@@ -28,6 +28,7 @@ const previousCredentials: DomiNationsCredential = {
 
 describe("direct Google-to-DomiNations connection Route Handler", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
@@ -186,6 +187,71 @@ describe("direct Google-to-DomiNations connection Route Handler", () => {
       "https://oauth2.googleapis.com/token",
     ]);
   });
+
+  describe.each([
+    { stage: "game_account_list", path: "/api/gameident/dom/list" },
+    { stage: "linked_accounts", path: "/api/dominations/linked_user_info" },
+  ])("$stage failure reporting", ({ stage, path }) => {
+    it.each([
+      { kind: "network", status: undefined, responseStatus: 502, code: "UPSTREAM_UNAVAILABLE", reason: "network" },
+      { kind: "http", status: 503, responseStatus: 502, code: "UPSTREAM_UNAVAILABLE", reason: "http" },
+      { kind: "shape", status: 200, responseStatus: 502, code: "UPSTREAM_UNAVAILABLE", reason: "response_shape" },
+      { kind: "session", status: 401, responseStatus: 401, code: "DOMINATIONS_SESSION_REQUIRED", reason: "http" },
+    ])("returns a safe stage for $kind failure and preserves the Google session", async ({ kind, status, responseStatus, code, reason }) => {
+      stubEnvironment();
+      const session = await createGoogleSession(previousCredentials);
+      const privateFailure = "private-upstream-body-network-error-or-token";
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchMock = createConnectFetch(session.store.values, {
+        accountResponse: {
+          path,
+          respond: () => {
+            if (kind === "network") throw new TypeError(privateFailure);
+            return Response.json({ error: privateFailure, access_token: domiAccessToken }, { status });
+          },
+        },
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await connectGoogleAccount(createRequest(session));
+      const body: unknown = await response.json();
+
+      expect(response.status).toBe(responseStatus);
+      expect(body).toEqual({ ok: false, error: { code, stage } });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(warning).toHaveBeenCalledWith("Store connection failed", {
+        code: kind === "session" ? "SESSION_EXPIRED" : code,
+        stage,
+        ...(status === undefined ? {} : { status }),
+        reason,
+      });
+      const visibleDiagnostics = JSON.stringify({ body, warnings: warning.mock.calls });
+      for (const secret of [privateFailure, googleRefreshToken, googleAccessToken, xsollaToken, domiAccessToken, previousCredentials.cookies[0]]) {
+        expect(visibleDiagnostics).not.toContain(secret);
+      }
+      const resolved = await readSession(session);
+      expect(resolved.session.admin.email).toBe("admin@example.com");
+      expect(resolved.session.dominations).toEqual(previousCredentials);
+      expect(upstreamCalls(fetchMock)).toHaveLength(6);
+    });
+  });
+
+  it("still asks for dashboard login when its own stored session has expired", async () => {
+    stubEnvironment();
+    const session = await createGoogleSession();
+    session.store.values.clear();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = createConnectFetch(session.store.values);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await connectGoogleAccount(createRequest(session));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: { code: "AUTH_REQUIRED" } });
+    expect(upstreamCalls(fetchMock)).toEqual([]);
+    expect(JSON.stringify(warning.mock.calls)).not.toContain(session.sealedCookie);
+  });
 });
 
 function stubEnvironment() {
@@ -230,10 +296,11 @@ class MemoryAuthStore implements AuthKeyValueStore {
 
 function createConnectFetch(
   redisValues: Map<string, string>,
-  { googleStatus = 200, linkedIds = accountIds, listedIds = accountIds }: {
+  { googleStatus = 200, linkedIds = accountIds, listedIds = accountIds, accountResponse }: {
     googleStatus?: number;
     linkedIds?: string[];
     listedIds?: string[];
+    accountResponse?: { path: string; respond: () => Response };
   } = {},
 ) {
   return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
@@ -260,6 +327,7 @@ function createConnectFetch(
       return Response.json({ token: xsollaToken });
     }
     if (url.origin !== "https://api.dominationsworld.com") throw new Error("Unexpected upstream origin");
+    if (url.pathname === accountResponse?.path) return accountResponse.respond();
     switch (url.pathname) {
       case "/api/accounts/signup":
         return Response.json(
@@ -272,7 +340,7 @@ function createConnectFetch(
           { headers: { "Set-Cookie": "domi_auth=auth-cookie; Path=/" } },
         );
       case "/api/gameident/dom/list":
-        return Response.json({ gameIds: listedIds });
+        return Response.json({ gameIds: Object.fromEntries(listedIds.map((id) => [id, {}])) });
       case "/api/dominations/linked_user_info":
         return Response.json({ accounts: linkedIds.map((gameAccountId) => ({ gameAccountId, name: gameAccountId })) });
       default:

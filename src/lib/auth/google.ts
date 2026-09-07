@@ -171,7 +171,10 @@ export async function refreshGoogleAccessToken(
       }
       throw error;
     }
-    throw new AuthError("UPSTREAM_UNAVAILABLE", { cause: error });
+    throw new AuthError("UPSTREAM_UNAVAILABLE", {
+      cause: error,
+      diagnostic: { stage: "google_refresh", reason: "network" },
+    });
   } finally {
     clearTimeout(timeout);
   }

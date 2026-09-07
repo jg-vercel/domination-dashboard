@@ -62,7 +62,9 @@ export async function GET(request: NextRequest) {
       resolved = await attachDomiNationsSession(resolved.sealedCookie, dominations, config);
     } catch (error) {
       // Preserve the dashboard login so the same Google account can retry.
-      redirectUrl.searchParams.set("auth_error", asAuthError(error).code);
+      const { code, diagnostic } = asAuthError(error);
+      console.warn("Store connection failed", { code, ...diagnostic });
+      redirectUrl.searchParams.set("auth_error", code);
     }
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.set(
