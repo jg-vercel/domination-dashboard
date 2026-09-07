@@ -126,9 +126,19 @@ export async function loadDashboardSnapshot(
         webSpecialsCount: catalog.webSpecialsCount,
         freeProductCount: catalog.freeProductCount,
         purchasableSkuCount: catalog.purchasableSkuCount,
+        offerIdCount: productsByAccount[index]?.filter((product) => product.offerId).length ?? 0,
         disabledProductCount: catalog.disabledProductCount,
         exactTargetNameCount: catalog.exactTargetNameCount,
         whitespaceFoldedTargetNameCount: catalog.whitespaceFoldedTargetNameCount,
+      });
+    } else if (result.product.state === "unverified") {
+      const target = findTargetProduct(productsByAccount[index] ?? []);
+      console.info("Store target verification", {
+        accountIndex: index + 1,
+        skuPresent: Boolean(target?.sku),
+        offerIdPresent: Boolean(target?.offerId),
+        sectionVerified: result.product.sectionVerified,
+        isFree: result.product.isFree,
       });
     }
     return result;
@@ -162,7 +172,7 @@ export function summarizeProductCatalog(products: StoreProduct[]): ProductCatalo
     namedProductCount: products.filter((product) => product.name.trim().length > 0).length,
     webSpecialsCount: webSpecials.length,
     freeProductCount: products.filter((product) => product.isFree || product.price === 0).length,
-    purchasableSkuCount: products.filter((product) => product.sku && product.offerId).length,
+    purchasableSkuCount: products.filter((product) => product.sku).length,
     disabledProductCount: products.filter((product) => product.disabled).length,
     exactTargetNameCount: products.filter((product) => isTargetProductName(product.name)).length,
     // Diagnostic only. This does not broaden the product selected for purchase.
@@ -208,7 +218,8 @@ export function getProductState(product: StoreProduct | null): {
     (product.stockAvailable !== null && product.stockAvailable > 0);
   let state: ProductState;
 
-  if (!sectionVerified || !isFree || !product.sku || !product.offerId) {
+  // The official store passes an empty offerId through; SKU identifies the item.
+  if (!sectionVerified || !isFree || !product.sku) {
     state = "unverified";
   } else if (product.disabled || product.locked || product.noInventory) {
     state = "unavailable";

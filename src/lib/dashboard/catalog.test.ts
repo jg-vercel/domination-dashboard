@@ -60,6 +60,18 @@ describe("product catalog diagnostics", () => {
     });
   });
 
+  it("allows the exact free target with a SKU and an empty offer ID without confusing the catalog counts", () => {
+    const target = { ...product, name: "Free Legendary Token!", price: 0, offerId: "" };
+
+    expect(findTargetProduct([target])).toBe(target);
+    expect(getProductState(target)).toMatchObject({ state: "available", isFree: true });
+    expect(summarizeProductCatalog([target])).toMatchObject({
+      exactTargetNameCount: 1, purchasableSkuCount: 1,
+    });
+    expect(getProductState({ ...target, sku: "" })).toMatchObject({ state: "unverified" });
+    expect(summarizeProductCatalog([{ ...target, sku: "" }])).toMatchObject({ purchasableSkuCount: 0 });
+  });
+
   it("identifies unnamed, disabled, and identifier-free catalogs without diagnosing their cause", () => {
     expect(summarizeProductCatalog([{ ...product, name: "  ", sku: "", offerId: "", disabled: true, tags: [] }])).toMatchObject({
       productCount: 1, namedProductCount: 0, webSpecialsCount: 0,
@@ -101,6 +113,7 @@ describe("product catalog diagnostics", () => {
     expect(info).toHaveBeenCalledExactlyOnceWith("Store product lookup", {
       accountIndex: 1, productCount: 1, namedProductCount: 1, webSpecialsCount: 1,
       freeProductCount: 0, purchasableSkuCount: 1, disabledProductCount: 0,
+      offerIdCount: 1,
       exactTargetNameCount: 0, whitespaceFoldedTargetNameCount: 0,
     });
     expect(JSON.stringify(info.mock.calls)).not.toMatch(/private|Private/);

@@ -95,7 +95,7 @@ describe("all-account claim service", () => {
     expect(purchaseAccounts).toEqual([accountIds[0]]);
   });
 
-  it("claims the exact Free Legendary Token! among the observed paid Legendary specials", async () => {
+  it.each(["free-token-offer-0", ""])("claims the exact Free Legendary Token! with offer ID %j among paid Legendary specials", async (offerId) => {
     const additionalProducts = [
       "Small Legendary Token Special!", "Medium Legendary Token Special!", "Large Legendary Token Special!",
       "2X Small Legendary Token Special!", "2X Medium Legendary Token Special!", "2X Large Legendary Token Special!",
@@ -105,6 +105,7 @@ describe("all-account claim service", () => {
     }));
     const { fetchMock, purchaseAccounts } = createClaimFetch({
       allAvailable: true, ids: [accountIds[0]!], targetName: "Free Legendary Token!", additionalProducts,
+      targetOverride: { offerId },
     });
 
     const result = await claimFreeLegendaryTokenForAllAccounts(session, {
@@ -117,19 +118,20 @@ describe("all-account claim service", () => {
     const purchases = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/startpurchase"));
     expect(purchases).toHaveLength(1);
     expect(JSON.parse(String(purchases[0]?.[1]?.body))).toMatchObject({
-      itemSku: "free-token-sku-0", offerId: "free-token-offer-0", quantity: 1,
+      itemSku: "free-token-sku-0", offerId, quantity: 1,
     });
   });
 
   it.each([
+    { override: { google: "" }, reason: "ITEM_NOT_VERIFIED" },
     { override: { price: 9.99, is_free: false }, reason: "ITEM_NOT_VERIFIED" },
     { override: { disabled: 1 }, reason: "ITEM_NOT_AVAILABLE" },
     { override: { noInventory: 1 }, reason: "ITEM_NOT_AVAILABLE" },
     { override: { locked: 1 }, reason: "ITEM_NOT_AVAILABLE" },
     { override: { tags: ["OtherSection"] }, reason: "ITEM_NOT_VERIFIED" },
-  ])("does not purchase the exact bang title when safety checks fail: %j", async ({ override, reason }) => {
+  ])("does not purchase the exact bang title with empty offer ID when safety checks fail: %j", async ({ override, reason }) => {
     const { fetchMock, purchaseAccounts } = createClaimFetch({
-      allAvailable: true, ids: [accountIds[0]!], targetName: "Free Legendary Token!", targetOverride: override,
+      allAvailable: true, ids: [accountIds[0]!], targetName: "Free Legendary Token!", targetOverride: { offerId: "", ...override },
     });
 
     const result = await claimFreeLegendaryTokenForAllAccounts(session, {

@@ -262,7 +262,7 @@ export async function startFreePurchase(
 ): Promise<"free"> {
   const isFree = product.isFree || product.price === 0;
   if (
-    !isFree || !product.sku || !product.offerId ||
+    !isFree || !product.sku ||
     product.disabled || product.noInventory || product.locked
   ) {
     throw new AuthError("PURCHASE_NOT_ELIGIBLE");

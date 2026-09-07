@@ -495,14 +495,14 @@ describe("DomiNations authentication adapter", () => {
     expect(purchaseFetch).not.toHaveBeenCalled();
   });
 
-  it("starts only a free purchase with the fixed safe request body", async () => {
+  it.each(["free-token-offer", ""])("starts only a free purchase with the given offer ID (%j) unchanged", async (offerId) => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValue(Response.json({ orderAccessToken: "free" }));
     const product = {
-      name: "Free Legendary Token",
+      name: "Free Legendary Token!",
       sku: "free-token-sku",
-      offerId: "free-token-offer",
+      offerId,
       price: 0,
       currency: "USD",
       isFree: true,
@@ -524,7 +524,7 @@ describe("DomiNations authentication adapter", () => {
     expect(body).toEqual({
       gameAccountId: "account-1",
       itemSku: "free-token-sku",
-      offerId: "free-token-offer",
+      offerId,
       quantity: 1,
       locale: "en-US",
       returnToken: true,
@@ -533,6 +533,29 @@ describe("DomiNations authentication adapter", () => {
       anonymize: false,
       projectId: 277239,
     });
+  });
+
+  it.each([
+    { google: "" },
+    { price: 9.99, is_free: false },
+    { disabled: 1 },
+    { noInventory: 1 },
+    { locked: 1 },
+  ])("blocks unsafe products even when an empty offer ID is permitted: %j", async (override) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json([
+      {
+        name: "Free Legendary Token!", google: "free-token-sku", offerId: "",
+        price: 0, is_free: false, stockAvailable: 1, stockMax: 1,
+        tags: ["AdditionalSpecials"], ...override,
+      },
+    ]));
+    const [product] = await getProductsForAccount(credentials, "account-1", fetchMock);
+    const purchaseFetch = vi.fn<typeof fetch>();
+
+    await expect(startFreePurchase(credentials, "account-1", product!, purchaseFetch)).rejects.toMatchObject({
+      code: "PURCHASE_NOT_ELIGIBLE",
+    });
+    expect(purchaseFetch).not.toHaveBeenCalled();
   });
 
   it("rejects paid checkout tokens and blocks non-free products before fetch", async () => {
