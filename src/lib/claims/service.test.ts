@@ -95,6 +95,71 @@ describe("all-account claim service", () => {
     expect(purchaseAccounts).toEqual([accountIds[0]]);
   });
 
+  it("claims the exact Free Legendary Token! among the observed paid Legendary specials", async () => {
+    const additionalProducts = [
+      "Small Legendary Token Special!", "Medium Legendary Token Special!", "Large Legendary Token Special!",
+      "2X Small Legendary Token Special!", "2X Medium Legendary Token Special!", "2X Large Legendary Token Special!",
+    ].map((name, index) => ({
+      name, google: `paid-sku-${index}`, offerId: `paid-offer-${index}`, price: 9.99,
+      is_free: false, stockAvailable: 1, stockMax: 1, tags: ["AdditionalSpecials"],
+    }));
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!], targetName: "Free Legendary Token!", additionalProducts,
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(), fetchImplementation: fetchMock,
+      now: new Date("2026-08-28T00:00:00.000Z"), createOwnerToken: () => "owner",
+    });
+
+    expect(purchaseAccounts).toEqual([accountIds[0]]);
+    expect(result.results).toEqual([expect.objectContaining({ status: "success", reason: "CONFIRMED" })]);
+    const purchases = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/startpurchase"));
+    expect(purchases).toHaveLength(1);
+    expect(JSON.parse(String(purchases[0]?.[1]?.body))).toMatchObject({
+      itemSku: "free-token-sku-0", offerId: "free-token-offer-0", quantity: 1,
+    });
+  });
+
+  it.each([
+    { override: { price: 9.99, is_free: false }, reason: "ITEM_NOT_VERIFIED" },
+    { override: { disabled: 1 }, reason: "ITEM_NOT_AVAILABLE" },
+    { override: { noInventory: 1 }, reason: "ITEM_NOT_AVAILABLE" },
+    { override: { locked: 1 }, reason: "ITEM_NOT_AVAILABLE" },
+    { override: { tags: ["OtherSection"] }, reason: "ITEM_NOT_VERIFIED" },
+  ])("does not purchase the exact bang title when safety checks fail: %j", async ({ override, reason }) => {
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!], targetName: "Free Legendary Token!", targetOverride: override,
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(), fetchImplementation: fetchMock,
+      now: new Date("2026-08-28T00:00:00.000Z"), createOwnerToken: () => "owner",
+    });
+
+    expect(result.results).toEqual([expect.objectContaining({ status: "ineligible", reason })]);
+    expect(purchaseAccounts).toEqual([]);
+  });
+
+  it.each([
+    ["Free Legendary Token", "Free Legendary Token!"],
+    ["Free Legendary Token!", "Free Legendary Token"],
+  ])("reuses the same cycle ledger when the title changes from %s to %s", async (firstName, secondName) => {
+    const store = new MemoryClaimStore();
+    const firstFetch = createClaimFetch({ allAvailable: true, ids: [accountIds[0]!], targetName: firstName });
+    const secondFetch = createClaimFetch({ allAvailable: true, ids: [accountIds[0]!], targetName: secondName });
+    const dependencies = { store, now: new Date("2026-08-28T00:00:00.000Z"), createOwnerToken: () => "owner" };
+
+    const firstResult = await claimFreeLegendaryTokenForAllAccounts(session, { ...dependencies, fetchImplementation: firstFetch.fetchMock });
+    const secondResult = await claimFreeLegendaryTokenForAllAccounts(session, { ...dependencies, fetchImplementation: secondFetch.fetchMock });
+
+    expect(firstResult.summary.success).toBe(1);
+    expect(secondResult.results).toEqual([expect.objectContaining({ status: "duplicate", reason: "PREVIOUS_RESULT" })]);
+    expect(firstFetch.purchaseAccounts).toEqual([accountIds[0]]);
+    expect(secondFetch.purchaseAccounts).toEqual([]);
+    expect([...store.values.keys()].filter((key) => key.includes(":ledger:"))).toHaveLength(1);
+  });
+
   it.each([0, 1, 2, 4, 6])("sends purchase requests for all %i eligible accounts strictly in account order", async (count) => {
     const store = new MemoryClaimStore();
     const ids = Array.from({ length: count }, (_, index) => `game-account-${index}`);
@@ -235,12 +300,18 @@ function createClaimFetch({
   ids = accountIds,
   listedIds = ids,
   linkedIds = ids,
+  targetName = "Free Legendary Token",
+  targetOverride = {},
+  additionalProducts = [],
 }: {
   failAccountOnePostCheck?: boolean;
   allAvailable?: boolean;
   ids?: string[];
   listedIds?: string[];
   linkedIds?: string[];
+  targetName?: string;
+  targetOverride?: Record<string, unknown>;
+  additionalProducts?: Record<string, unknown>[];
 } = {}) {
   const productReads = new Map<string, number>();
   const purchaseAccounts: string[] = [];
@@ -288,7 +359,7 @@ function createClaimFetch({
     const accountTwoClaimed = !allAvailable && index === 1;
     const stockAvailable = confirmedAfterPurchase || accountTwoClaimed ? 0 : 1;
     const product = {
-      name: "Free Legendary Token",
+      name: targetName,
       google: `free-token-sku-${index}`,
       offerId: `free-token-offer-${index}`,
       price: 0,
@@ -301,8 +372,9 @@ function createClaimFetch({
       locked: false,
       refresh: stockAvailable === 0 ? 3_600 : 0,
       tags: !allAvailable && index === 2 ? [] : ["AdditionalSpecials"],
+      ...targetOverride,
     };
-    return Response.json(JSON.stringify([product]));
+    return Response.json(JSON.stringify([...additionalProducts, product]));
   });
 
   return { fetchMock, purchaseAccounts };

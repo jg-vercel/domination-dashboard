@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StoreProduct } from "@/lib/dominations/client";
 
-import { findTargetProduct, loadDashboardSnapshot, summarizeProductCatalog } from "./snapshot";
+import { findTargetProduct, getProductState, loadDashboardSnapshot, summarizeProductCatalog } from "./snapshot";
 
 const product: StoreProduct = {
   name: "Other special", sku: "private-sku", offerId: "private-offer",
@@ -12,6 +12,43 @@ const product: StoreProduct = {
 };
 
 describe("product catalog diagnostics", () => {
+  it.each(["Free Legendary Token", "Free Legendary Token!", "  free legendary token!  "])("selects only the known target title %j and reports it consistently", (name) => {
+    const target = { ...product, name, price: 0 };
+
+    expect(findTargetProduct([product, target])).toBe(target);
+    expect(summarizeProductCatalog([product, target])).toMatchObject({ exactTargetNameCount: 1 });
+    expect(getProductState(target)).toMatchObject({ state: "available" });
+  });
+
+  it.each([
+    "Small Legendary Token Special!",
+    "Medium Legendary Token Special!",
+    "Large Legendary Token Special!",
+    "2X Small Legendary Token Special!",
+    "2X Medium Legendary Token Special!",
+    "2X Large Legendary Token Special!",
+    "2X Free Legendary Token!",
+    "Free Legendary Token!!",
+    "Free Legendary Token! Bonus",
+    "Free Legendary Tokens!",
+    "Free Legendary Token Pack",
+    "Special Free Legendary Token!",
+  ])("does not select a similar or extended title %j even at zero price", (name) => {
+    const candidate = { ...product, name, price: 0 };
+
+    expect(findTargetProduct([candidate])).toBeNull();
+    expect(summarizeProductCatalog([candidate])).toMatchObject({ exactTargetNameCount: 0 });
+  });
+
+  it.each(["Free Legendary Token", "Free Legendary Token!"])("retains price and restriction checks for %j", (name) => {
+    const paidTarget = { ...product, name, price: 9.99, isFree: false };
+    expect(findTargetProduct([paidTarget])).toBe(paidTarget);
+    expect(getProductState(paidTarget)).toMatchObject({ state: "unverified", isFree: false });
+    for (const flag of ["disabled", "locked", "noInventory"] as const) {
+      expect(getProductState({ ...paidTarget, price: 0, [flag]: true })).toMatchObject({ state: "unavailable" });
+    }
+  });
+
   it("distinguishes empty catalogs from named products without the target", () => {
     expect(summarizeProductCatalog([])).toMatchObject({
       productCount: 0, namedProductCount: 0, webSpecialsCount: 0,
@@ -30,8 +67,8 @@ describe("product catalog diagnostics", () => {
     });
   });
 
-  it("reports whitespace differences without broadening automatic product selection", () => {
-    const candidate = { ...product, name: "Free  Legendary\nToken", price: 0 };
+  it.each(["Free  Legendary\nToken", "Free  Legendary\nToken!"])("reports whitespace differences in %j without broadening automatic selection", (name) => {
+    const candidate = { ...product, name, price: 0 };
     expect(summarizeProductCatalog([candidate])).toMatchObject({
       exactTargetNameCount: 0, whitespaceFoldedTargetNameCount: 1, freeProductCount: 1,
     });

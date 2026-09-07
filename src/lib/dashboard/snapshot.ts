@@ -12,6 +12,12 @@ import {
 } from "@/lib/dominations/client";
 
 export const TARGET_PRODUCT_NAME = "Free Legendary Token";
+// Accept only the original title and the storefront title confirmed in the
+// authenticated catalog. Do not use partial matches for paid token specials.
+const TARGET_PRODUCT_NAMES = new Set([
+  TARGET_PRODUCT_NAME.toLowerCase(),
+  `${TARGET_PRODUCT_NAME.toLowerCase()}!`,
+]);
 
 export type ProductState =
   | "available"
@@ -141,17 +147,15 @@ export async function loadDashboardSnapshot(
 }
 
 export function findTargetProduct(products: StoreProduct[]): StoreProduct | null {
-  return (
-    products.find(
-      (product) =>
-        product.name.trim().toLowerCase() === TARGET_PRODUCT_NAME.toLowerCase(),
-    ) ?? null
-  );
+  return products.find((product) => isTargetProductName(product.name)) ?? null;
+}
+
+function isTargetProductName(name: string): boolean {
+  return TARGET_PRODUCT_NAMES.has(name.trim().toLowerCase());
 }
 
 export function summarizeProductCatalog(products: StoreProduct[]): ProductCatalogSummary {
   const webSpecials = products.filter((product) => product.tags.includes("AdditionalSpecials"));
-  const normalizedTargetName = TARGET_PRODUCT_NAME.toLowerCase();
   const maxVisibleSpecials = 30;
   return {
     productCount: products.length,
@@ -160,9 +164,9 @@ export function summarizeProductCatalog(products: StoreProduct[]): ProductCatalo
     freeProductCount: products.filter((product) => product.isFree || product.price === 0).length,
     purchasableSkuCount: products.filter((product) => product.sku && product.offerId).length,
     disabledProductCount: products.filter((product) => product.disabled).length,
-    exactTargetNameCount: products.filter((product) => product.name.trim().toLowerCase() === normalizedTargetName).length,
+    exactTargetNameCount: products.filter((product) => isTargetProductName(product.name)).length,
     // Diagnostic only. This does not broaden the product selected for purchase.
-    whitespaceFoldedTargetNameCount: products.filter((product) => product.name.trim().replace(/\s+/gu, " ").toLowerCase() === normalizedTargetName).length,
+    whitespaceFoldedTargetNameCount: products.filter((product) => isTargetProductName(product.name.replace(/\s+/gu, " "))).length,
     webSpecials: webSpecials.slice(0, maxVisibleSpecials).map((product) => ({
       name: product.name.trim().slice(0, 120),
       price: product.price,
