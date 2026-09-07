@@ -1,94 +1,146 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
-const OFFICIAL_STORE_URL = "https://www.dominationsworld.com/web-store";
+type ConnectionState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; code: string };
 
 export function DominationLinkPanel({
   bridgeUrl,
+  csrfToken,
   connected,
 }: {
-  bridgeUrl: string;
+  bridgeUrl: string | null;
+  csrfToken: string | null;
   connected: boolean;
 }) {
-  const bookmarkRef = useRef<HTMLAnchorElement>(null);
-  const [copied, setCopied] = useState(false);
-  const bookmarklet = useMemo(
-    () => createBookmarklet(bridgeUrl),
-    [bridgeUrl],
-  );
+  const router = useRouter();
+  const [state, setState] = useState<ConnectionState>({ status: "idle" });
+  const authenticated = csrfToken !== null;
 
-  useEffect(() => {
-    bookmarkRef.current?.setAttribute("href", bookmarklet);
-  }, [bookmarklet]);
-
-  async function copyBookmarklet() {
+  async function connectAccount() {
+    if (!csrfToken || state.status === "loading") return;
+    setState({ status: "loading" });
     try {
-      await navigator.clipboard.writeText(bookmarklet);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2_000);
+      const response = await fetch("/api/auth/dominations/connect", {
+        method: "POST",
+        headers: { "X-Connect-CSRF": csrfToken },
+        cache: "no-store",
+      });
+      const payload: unknown = await response.json();
+      if (
+        response.ok &&
+        isRecord(payload) &&
+        payload.ok === true &&
+        payload.accountCount === 3
+      ) {
+        window.location.replace("/?dominations=connected#accounts");
+        return;
+      }
+      const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+      setState({
+        status: "error",
+        code: typeof error?.code === "string" ? error.code : "UPSTREAM_UNAVAILABLE",
+      });
+      router.refresh();
     } catch {
-      setCopied(false);
+      setState({ status: "error", code: "UPSTREAM_UNAVAILABLE" });
     }
   }
 
   return (
-    <section className={`link-panel ${connected ? "is-connected" : ""}`}>
+    <section
+      className={`link-panel ${connected ? "is-connected" : ""}`}
+      id="domi-connect"
+      aria-labelledby="domi-connect-title"
+    >
       <div className="link-panel-heading">
         <div>
-          <p className="eyebrow">OFFICIAL SESSION BRIDGE</p>
-          <h2>{connected ? "DomiNations 계정 연결됨" : "DomiNations 공식 로그인 연결"}</h2>
+          <p className="eyebrow">GAME ACCOUNT CONNECTION</p>
+          <h2 id="domi-connect-title">Domi 연결</h2>
         </div>
         <span className={`card-status ${connected ? "success" : "pending"}`}>
-          {connected ? "미국 서버 준비됨" : "최초 1회 설정"}
+          {connected
+            ? "계정 연결됨"
+            : !bridgeUrl
+              ? "설정 확인 필요"
+              : authenticated
+                ? "상점 연결 필요"
+                : "Google 로그인 필요"}
         </span>
       </div>
 
       <p className="link-panel-copy">
         {connected
-          ? "현재 세션으로 미국 Vercel 함수에서 무료 수령을 실행합니다. 세션이 만료되면 아래 북마크로 다시 연결하세요."
-          : "공식 상점 로그인은 그대로 사용하고, 로그인된 세션만 미국 Vercel 함수에 안전하게 연결합니다."}
+          ? "게임 계정이 연결되었습니다. 아래 계정 목록에서 무료 토큰 상태를 확인하고 수령해 주세요."
+          : "Google 로그인 후 해당 계정의 상점 인증을 서버에서 연결합니다. 수령 요청은 미국 서버에서 실행됩니다."}
       </p>
 
-      <ol className="link-steps">
-        <li>
-          아래 <strong>Domi 연결</strong> 링크를 브라우저 북마크바로 한 번 끌어 놓습니다.
-        </li>
-        <li>공식 상점을 열고 평소처럼 Google 로그인을 완료합니다.</li>
-        <li>공식 상점 화면에서 북마크바의 Domi 연결을 누릅니다.</li>
-      </ol>
+      {!bridgeUrl ? (
+        <div className="link-login-prompt">
+          <p>이 주소에서는 로그인 설정이 준비되지 않았습니다. 안내받은 대시보드 주소를 확인해 주세요.</p>
+        </div>
+      ) : !authenticated ? (
+        <div className="link-login-prompt">
+          <p>수령할 게임 계정과 연결된 Google 계정으로 로그인해 주세요.</p>
+          <a
+            className="primary-button link-google-login"
+            href={`${bridgeUrl}/api/auth/google/start`}
+          >
+            Google 로그인
+          </a>
+        </div>
+      ) : (
+        <div className="link-direct-actions">
+          <button
+            className="primary-button"
+            type="button"
+            onClick={connectAccount}
+            disabled={state.status === "loading"}
+          >
+            {state.status === "loading"
+              ? "상점 계정 확인 중…"
+              : connected
+                ? "계정 연결 새로고침"
+                : "Domi 연결"}
+          </button>
+          <a className="secondary-button" href={`${bridgeUrl}/api/auth/google/start`}>
+            Google 다시 로그인
+          </a>
+        </div>
+      )}
 
-      <div className="link-actions">
-        <a
-          ref={bookmarkRef}
-          className="bookmarklet-link"
-          href="#bookmarklet"
-          draggable
-          onClick={(event) => event.preventDefault()}
-          title="이 링크를 북마크바로 끌어 놓으세요"
-        >
-          Domi 연결
-        </a>
-        <button className="secondary-button" type="button" onClick={copyBookmarklet}>
-          {copied ? "북마크 코드 복사됨" : "북마크 코드 복사"}
-        </button>
-        <a
-          className="primary-button official-store-link"
-          href={OFFICIAL_STORE_URL}
-          target="_blank"
-          rel="noreferrer"
-        >
-          공식 상점 열기 <span aria-hidden="true">↗</span>
-        </a>
-      </div>
-      <p className="link-security-note">
-        공식 로그인 정보는 브라우저 기록에서 즉시 제거되며, 대시보드 로그인·same-origin·CSRF 검증 후 서버 메모리에서 한 번만 사용됩니다.
+      {state.status === "error" && (
+        <p className="claim-error" role="alert">
+          {connectionErrorMessage(state.code)}
+        </p>
+      )}
+      <p className="link-security-note" role="status">
+        {state.status === "loading"
+          ? "Google 인증과 게임 계정 3개를 확인하고 있습니다."
+          : "계정 연결은 아이템을 수령하지 않습니다. 수령은 아래 버튼을 누를 때만 진행됩니다."}
       </p>
     </section>
   );
 }
 
-function createBookmarklet(bridgeUrl: string): string {
-  const target = JSON.stringify(`${bridgeUrl}/auth/domination-bridge`);
-  return `javascript:(()=>{const h=location.hostname;if(h!=="www.dominationsworld.com"&&h!=="dominationsworld.com"){alert("Open DomiNations World first.");return}const t=localStorage.getItem("dwjwt");if(!t){alert("Sign in to DomiNations World first.");return}location.href=${target}+"#token="+encodeURIComponent(t)})()`;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function connectionErrorMessage(code: string): string {
+  const messages: Record<string, string> = {
+    AUTH_REQUIRED: "대시보드 로그인이 만료되었습니다. Google 다시 로그인을 눌러 주세요.",
+    GOOGLE_REFRESH_REJECTED: "Google 인증을 갱신할 수 없습니다. Google 다시 로그인을 눌러 주세요.",
+    GOOGLE_REFRESH_TOKEN_MISSING: "Google 인증을 갱신할 수 없습니다. Google 다시 로그인을 눌러 주세요.",
+    XSOLLA_GOOGLE_TOKEN_REJECTED: "상점 인증 서비스에서 Google 인증을 거부했습니다. 연결 요청을 확인해야 합니다.",
+    DOMINATIONS_SIGNUP_REJECTED: "DomiNations 로그인 응답을 확인하지 못했습니다. 연결 요청을 확인해야 합니다.",
+    DOMINATIONS_TOKEN_REJECTED: "DomiNations 상점 토큰을 발급받지 못했습니다. 연결 요청을 확인해야 합니다.",
+    ACCOUNT_COUNT_MISMATCH: "이 Google 계정에 연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
+    SESSION_STORE_UNAVAILABLE: "로그인 저장소에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+  };
+  return messages[code] ?? "상점 연결을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }

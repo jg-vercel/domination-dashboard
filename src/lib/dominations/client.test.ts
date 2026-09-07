@@ -68,6 +68,106 @@ describe("DomiNations authentication adapter", () => {
     expect(tokenHeaders.get("Cookie")).toBe("auth_flow=flow-cookie");
   });
 
+  it("exchanges a valid signup code when errorReason is an empty string", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ token: "xsolla-jwt" }))
+      .mockResolvedValueOnce(
+        Response.json({ errorReason: "", authcode: "domi-auth-code" }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ token: "domi-bearer", userid: "user-1", xsid: "xsolla-1" }),
+      );
+
+    await expect(
+      connectDomiNations("google-access-token", fetchMock),
+    ).resolves.toMatchObject({ accessToken: "domi-bearer", userId: "user-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/api/accounts/token");
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+      code: "domi-auth-code",
+    });
+  });
+
+  it.each([
+    {
+      description: "a recognized nonempty error even with a code",
+      payload: { errorReason: "wrongCredentials", authcode: "private-auth-code" },
+      reason: "wrongCredentials",
+      authcodePresent: true,
+    },
+    {
+      description: "a missing authorization code",
+      payload: { errorReason: "" },
+      reason: "empty",
+      authcodePresent: false,
+    },
+    {
+      description: "an empty authorization code",
+      payload: { authcode: "" },
+      reason: "absent",
+      authcodePresent: false,
+    },
+    {
+      description: "a whitespace-only authorization code",
+      payload: { authcode: "   " },
+      reason: "absent",
+      authcodePresent: false,
+    },
+    {
+      description: "a malformed authorization code",
+      payload: { authcode: 123 },
+      reason: "absent",
+      authcodePresent: false,
+    },
+    {
+      description: "a null error reason",
+      payload: { errorReason: null, authcode: "private-auth-code" },
+      reason: "malformed",
+      authcodePresent: true,
+    },
+    {
+      description: "an object error reason",
+      payload: {
+        errorReason: { token: "private-upstream-value" },
+        authcode: "private-auth-code",
+      },
+      reason: "malformed",
+      authcodePresent: true,
+    },
+    {
+      description: "an unknown sensitive error reason",
+      payload: {
+        errorReason: "private-upstream-value",
+        authcode: "private-auth-code",
+      },
+      reason: "unknown",
+      authcodePresent: true,
+    },
+  ])("rejects $description before token exchange", async ({ payload, reason, authcodePresent }) => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(payload));
+
+    try {
+      await expect(
+        connectDomiNationsWithXsollaToken("private-xsolla-jwt", fetchMock),
+      ).rejects.toMatchObject({ code: "DOMINATIONS_SIGNUP_REJECTED" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith("Upstream authentication rejected", {
+        stage: "dominations_signup",
+        status: 200,
+        reason,
+        authcodePresent,
+      });
+      const diagnostic = JSON.stringify(warning.mock.calls);
+      expect(diagnostic).not.toContain("private-auth-code");
+      expect(diagnostic).not.toContain("private-upstream-value");
+      expect(diagnostic).not.toContain("private-xsolla-jwt");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("identifies an Xsolla Google token rejection without logging secrets", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(

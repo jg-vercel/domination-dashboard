@@ -92,15 +92,19 @@ export async function connectDomiNationsWithXsollaToken(
     "DOMINATIONS_SIGNUP_REJECTED",
     "dominations_signup",
   );
+  const signupErrorReason = classifySignupErrorReason(signupPayload.errorReason);
+  const authcodePresent =
+    typeof signupPayload.authcode === "string" &&
+    signupPayload.authcode.trim().length > 0;
   if (
-    typeof signupPayload.errorReason === "string" ||
-    typeof signupPayload.authcode !== "string" ||
-    !signupPayload.authcode
+    (signupErrorReason !== "absent" && signupErrorReason !== "empty") ||
+    !authcodePresent
   ) {
     rejectUpstreamAuthentication(
       "DOMINATIONS_SIGNUP_REJECTED",
       "dominations_signup",
       signupResponse.status,
+      { reason: signupErrorReason, authcodePresent },
     );
   }
 
@@ -322,6 +326,36 @@ type UpstreamAuthenticationErrorCode = Extract<
   | "DOMINATIONS_TOKEN_REJECTED"
 >;
 
+const SIGNUP_ERROR_REASONS = [
+  "claimedCredentials",
+  "unverifiedEmail",
+  "wrongCredentials",
+  "invalidPassword",
+  "userExists",
+  "unknownError",
+  "serverError",
+  "newAccountVerifyEmail",
+  "wrongPassword",
+  "tooManyRequests",
+  "bannedUser",
+  "alwaysFailCase",
+  "signupRequired",
+] as const;
+
+type SignupErrorReason =
+  | (typeof SIGNUP_ERROR_REASONS)[number]
+  | "absent"
+  | "empty"
+  | "malformed"
+  | "unknown";
+
+function classifySignupErrorReason(value: unknown): SignupErrorReason {
+  if (value === undefined) return "absent";
+  if (value === "") return "empty";
+  if (typeof value !== "string") return "malformed";
+  return SIGNUP_ERROR_REASONS.find((reason) => reason === value) ?? "unknown";
+}
+
 async function readAuthenticationPayload(
   response: Response,
   code: UpstreamAuthenticationErrorCode,
@@ -338,8 +372,13 @@ function rejectUpstreamAuthentication(
   code: UpstreamAuthenticationErrorCode,
   stage: UpstreamAuthenticationStage,
   status: number,
+  signupDetails?: { reason: SignupErrorReason; authcodePresent: boolean },
 ): never {
-  console.warn("Upstream authentication rejected", { stage, status });
+  console.warn("Upstream authentication rejected", {
+    stage,
+    status,
+    ...signupDetails,
+  });
   throw new AuthError(code);
 }
 

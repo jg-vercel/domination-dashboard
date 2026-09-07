@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { loadAccountDirectory } from "@/lib/dashboard/snapshot";
+import { connectDomiNations } from "@/lib/dominations/client";
 import {
   createRedisAuthStore,
   type AuthKeyValueStore,
@@ -15,6 +17,7 @@ import {
   unsealPayload,
 } from "./crypto";
 import { AuthError } from "./errors";
+import { refreshGoogleAccessToken } from "./google";
 import {
   APP_SESSION_IDLE_TTL_SECONDS,
   createAppSessionPointer,
@@ -137,6 +140,24 @@ export async function attachDomiNationsSession(
     config.sessionSecret,
     nowSeconds,
   );
+}
+
+export async function connectStoredGoogleSession(
+  sealedCookie: string,
+  config: AuthConfig,
+  options: ResolveSessionOptions = {},
+): Promise<ResolvedAppSession> {
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1_000);
+  const store = options.store ?? createRedisAuthStore();
+  const pointer = readAppSessionPointer(sealedCookie, config.sessionSecret, nowSeconds);
+  const storedValue = await store.get(getAppSessionRedisKey(pointer.sessionId));
+  if (!storedValue) throw new AuthError("SESSION_EXPIRED");
+
+  const stored = readStoredSession(storedValue, config.sessionSecret, nowSeconds);
+  const googleAccessToken = await refreshGoogleAccessToken(config, stored.googleRefreshToken);
+  const dominations = await connectDomiNations(googleAccessToken);
+  await loadAccountDirectory(dominations);
+  return attachDomiNationsSession(sealedCookie, dominations, config, options);
 }
 
 export async function destroyServerAppSession(

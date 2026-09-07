@@ -90,7 +90,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const claimDisabledReason = !session
     ? "Google 로그인과 계정 확인이 필요합니다."
     : !session.dominations || !snapshot
-      ? "DomiNations 공식 로그인 세션을 연결해 주세요."
+      ? "위의 Domi 연결 버튼으로 게임 계정을 확인해 주세요."
     : !snapshot?.ready
       ? "3개 계정의 exact 무료 상품 검증이 필요합니다."
       : !redisReadiness.configured
@@ -164,12 +164,11 @@ export default async function Home({ searchParams }: HomeProps) {
           </div>
         </section>
 
-        {session && bridgeBaseUrl ? (
-          <DominationLinkPanel
-            bridgeUrl={bridgeBaseUrl}
-            connected={Boolean(session.dominations) && sessionError !== "DOMINATIONS_SESSION_REQUIRED"}
-          />
-        ) : null}
+        <DominationLinkPanel
+          bridgeUrl={bridgeBaseUrl}
+          csrfToken={session?.claimCsrfToken ?? null}
+          connected={Boolean(snapshot)}
+        />
 
         <section className="stats-grid" aria-label="수령 현황">
           <article className="stat-card">
@@ -229,7 +228,7 @@ export default async function Home({ searchParams }: HomeProps) {
                         <small>
                           {authReadiness.configured
                             ? session
-                              ? "공식 로그인 세션을 연결하면 확인됩니다."
+                              ? "Domi 연결 버튼으로 계정을 확인해 주세요."
                               : "Google 로그인 후 연결을 시작합니다."
                             : "OAuth 환경 변수 설정이 필요합니다."}
                         </small>
@@ -308,7 +307,7 @@ function AuthControl({
       <span>G</span>
       <div>
         <strong>Google로 연결</strong>
-        <small>관리자 계정만 허용</small>
+        <small>게임 계정의 Google 로그인</small>
       </div>
     </a>
   );
@@ -358,7 +357,7 @@ function AuthErrorBanner({ code }: { code: string }) {
     XSOLLA_GOOGLE_TOKEN_REJECTED: "Xsolla가 Google 로그인 token을 거부했습니다.",
     DOMINATIONS_SIGNUP_REJECTED: "DomiNations World 로그인 시작 요청이 거부되었습니다.",
     DOMINATIONS_TOKEN_REJECTED: "DomiNations World session token 발급이 거부되었습니다.",
-    DOMINATIONS_SESSION_REQUIRED: "DomiNations World 공식 로그인 세션을 다시 연결해 주세요.",
+    DOMINATIONS_SESSION_REQUIRED: "Domi 연결 버튼으로 상점 계정을 다시 연결해 주세요.",
     ACCOUNT_COUNT_MISMATCH: "연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
     SESSION_INVALID: "로그인 session이 올바르지 않아 삭제가 필요합니다.",
     SESSION_EXPIRED: "로그인 session이 만료되었습니다. 다시 로그인해 주세요.",

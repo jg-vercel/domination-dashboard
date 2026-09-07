@@ -14,10 +14,16 @@ import {
   authCookieOptions,
   readOAuthFlow,
 } from "@/lib/auth/session";
-import { createServerAppSession } from "@/lib/auth/server-session";
+import {
+  attachDomiNationsSession,
+  createServerAppSession,
+} from "@/lib/auth/server-session";
+import { loadAccountDirectory } from "@/lib/dashboard/snapshot";
+import { connectDomiNations } from "@/lib/dominations/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   let baseUrl = request.nextUrl.origin;
@@ -44,17 +50,24 @@ export async function GET(request: NextRequest) {
 
     const google = await exchangeGoogleAuthorizationCode(config, flow, code);
 
-    const { sealedCookie } = await createServerAppSession(
+    let resolved = await createServerAppSession(
       google.identity,
       google.refreshToken,
       config,
     );
-    const response = NextResponse.redirect(
-      new URL("/?auth=connected", config.baseUrl),
-    );
+    const redirectUrl = new URL("/?auth=connected", config.baseUrl);
+    try {
+      const dominations = await connectDomiNations(google.accessToken);
+      await loadAccountDirectory(dominations);
+      resolved = await attachDomiNationsSession(resolved.sealedCookie, dominations, config);
+    } catch (error) {
+      // Preserve the dashboard login so the same Google account can retry.
+      redirectUrl.searchParams.set("auth_error", asAuthError(error).code);
+    }
+    const response = NextResponse.redirect(redirectUrl);
     response.cookies.set(
       APP_SESSION_COOKIE,
-      sealedCookie,
+      resolved.sealedCookie,
       authCookieOptions(
         config.secureCookies,
         APP_SESSION_COOKIE_TTL_SECONDS,

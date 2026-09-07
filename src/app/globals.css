@@ -436,6 +436,7 @@ main {
 .card-status.success { color: #397f61; background: #e6f4ec; }
 
 .link-panel {
+  scroll-margin-top: 20px;
   margin: 18px 0;
   padding: 24px 26px;
   border: 1px solid #ead7ad;
@@ -469,6 +470,31 @@ main {
   line-height: 1.7;
 }
 
+.link-login-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid #ead7ad;
+  border-radius: 8px;
+  background: #fff8e8;
+}
+
+.link-login-prompt p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.link-login-prompt .link-google-login {
+  flex: none;
+  width: auto;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .link-steps {
   display: grid;
   gap: 7px;
@@ -487,6 +513,17 @@ main {
   display: grid;
   grid-template-columns: minmax(130px, 0.55fr) minmax(150px, 0.65fr) minmax(180px, 1fr);
   gap: 9px;
+}
+
+.link-direct-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.link-direct-actions .primary-button {
+  width: auto;
+  min-width: 180px;
 }
 
 .bookmarklet-link,
@@ -524,6 +561,14 @@ main {
 .official-store-link {
   min-height: 42px;
   text-decoration: none;
+}
+
+.link-actions button:disabled {
+  color: #727b89;
+  border-color: #dfe3e9;
+  background: #eff1f4;
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 .link-security-note {
@@ -1019,10 +1064,22 @@ footer {
 
   .topbar {
     align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
   }
 
+  .auth-control-group,
   .profile-placeholder {
-    display: none;
+    max-width: 100%;
+  }
+
+  .profile-placeholder > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .profile-placeholder > span {
+    flex-shrink: 0;
   }
 
   .hero-card {
@@ -1050,8 +1107,21 @@ footer {
     flex-direction: column;
   }
 
+  .link-panel-heading .card-status {
+    margin-left: 0;
+  }
+
+  .link-login-prompt {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .link-actions {
     grid-template-columns: 1fr;
+  }
+
+  .link-direct-actions > * {
+    flex-basis: 100%;
   }
 
   .bridge-card {
