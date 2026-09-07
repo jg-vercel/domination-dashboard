@@ -20,11 +20,34 @@ export type ProductState =
   | "unverified"
   | "missing";
 
+export interface ProductCatalogSummary {
+  productCount: number;
+  namedProductCount: number;
+  webSpecialsCount: number;
+  freeProductCount: number;
+  purchasableSkuCount: number;
+  disabledProductCount: number;
+  exactTargetNameCount: number;
+  whitespaceFoldedTargetNameCount: number;
+  webSpecials: Array<{
+    name: string;
+    price: number | null;
+    currency: string;
+    isFree: boolean;
+    stockAvailable: number | null;
+    disabled: boolean;
+    locked: boolean;
+    noInventory: boolean;
+  }>;
+  webSpecialsTruncated: boolean;
+}
+
 export interface DashboardAccount {
   maskedId: string;
   name: string;
   age: number | null;
   trophies: number | null;
+  catalog: ProductCatalogSummary;
   product: {
     state: ProductState;
     sectionVerified: boolean;
@@ -84,9 +107,26 @@ export async function loadDashboardSnapshot(
       ),
     ),
   );
-  const publicAccounts = accounts.map((account, index) =>
-    createDashboardAccount(account, productsByAccount[index] ?? []),
-  );
+  const publicAccounts = accounts.map((account, index) => {
+    const result = createDashboardAccount(account, productsByAccount[index] ?? []);
+    if (result.product.state === "missing") {
+      // Aggregate counts only: do not log credentials, account identifiers,
+      // upstream strings, product names, SKUs, or offer identifiers.
+      const catalog = result.catalog;
+      console.info("Store product lookup", {
+        accountIndex: index + 1,
+        productCount: catalog.productCount,
+        namedProductCount: catalog.namedProductCount,
+        webSpecialsCount: catalog.webSpecialsCount,
+        freeProductCount: catalog.freeProductCount,
+        purchasableSkuCount: catalog.purchasableSkuCount,
+        disabledProductCount: catalog.disabledProductCount,
+        exactTargetNameCount: catalog.exactTargetNameCount,
+        whitespaceFoldedTargetNameCount: catalog.whitespaceFoldedTargetNameCount,
+      });
+    }
+    return result;
+  });
 
   return {
     ready: publicAccounts.length > 0 && publicAccounts.every(
@@ -107,6 +147,34 @@ export function findTargetProduct(products: StoreProduct[]): StoreProduct | null
         product.name.trim().toLowerCase() === TARGET_PRODUCT_NAME.toLowerCase(),
     ) ?? null
   );
+}
+
+export function summarizeProductCatalog(products: StoreProduct[]): ProductCatalogSummary {
+  const webSpecials = products.filter((product) => product.tags.includes("AdditionalSpecials"));
+  const normalizedTargetName = TARGET_PRODUCT_NAME.toLowerCase();
+  const maxVisibleSpecials = 30;
+  return {
+    productCount: products.length,
+    namedProductCount: products.filter((product) => product.name.trim().length > 0).length,
+    webSpecialsCount: webSpecials.length,
+    freeProductCount: products.filter((product) => product.isFree || product.price === 0).length,
+    purchasableSkuCount: products.filter((product) => product.sku && product.offerId).length,
+    disabledProductCount: products.filter((product) => product.disabled).length,
+    exactTargetNameCount: products.filter((product) => product.name.trim().toLowerCase() === normalizedTargetName).length,
+    // Diagnostic only. This does not broaden the product selected for purchase.
+    whitespaceFoldedTargetNameCount: products.filter((product) => product.name.trim().replace(/\s+/gu, " ").toLowerCase() === normalizedTargetName).length,
+    webSpecials: webSpecials.slice(0, maxVisibleSpecials).map((product) => ({
+      name: product.name.trim().slice(0, 120),
+      price: product.price,
+      currency: product.currency.slice(0, 12),
+      isFree: product.isFree,
+      stockAvailable: product.stockAvailable,
+      disabled: product.disabled,
+      locked: product.locked,
+      noInventory: product.noInventory,
+    })),
+    webSpecialsTruncated: webSpecials.length > maxVisibleSpecials,
+  };
 }
 
 export function getProductState(product: StoreProduct | null): {
@@ -167,6 +235,7 @@ function createDashboardAccount(
     name: account.name,
     age: account.age,
     trophies: account.trophies,
+    catalog: summarizeProductCatalog(products),
     product: getProductState(findTargetProduct(products)),
   };
 }

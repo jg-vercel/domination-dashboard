@@ -707,6 +707,7 @@ main {
 .account-row > div {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .account-row strong {
@@ -728,6 +729,58 @@ main {
 .account-state.product-claimed { color: #6f64a0; }
 .account-state.product-unavailable,
 .account-state.product-unverified { color: #a45440; }
+
+.product-catalog-details {
+  grid-column: 2 / -1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: #f5f6f8;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.product-catalog-details p {
+  margin: 0;
+}
+
+.product-catalog-details p + p,
+.product-catalog-details details {
+  margin-top: 5px;
+}
+
+.product-catalog-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #505e74;
+  font-weight: 600;
+}
+
+.product-catalog-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-catalog-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+}
+
+.product-catalog-price {
+  color: #505e74;
+}
+
+.product-catalog-availability {
+  grid-column: 1 / -1;
+  color: #a45440;
+  font-size: 10px;
+}
 
 .disabled-button,
 .primary-button,

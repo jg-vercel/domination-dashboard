@@ -5,6 +5,7 @@ import { ClaimAllButton } from "@/components/claim-all-button";
 import { ClaimAuditList } from "@/components/claim-audit-list";
 import { SessionKeepalive } from "@/components/session-keepalive";
 import { DominationLinkPanel } from "@/components/domination-link-panel";
+import { ProductCatalogDetails } from "@/components/product-catalog-details";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -331,7 +332,7 @@ function ConnectedAccountRow({
     claimed: "오늘 수령됨",
     unavailable: "수령 불가",
     unverified: "검증 필요",
-    missing: "상품 없음",
+    missing: account.catalog.productCount === 0 ? "상품 목록 비어 있음" : "목표 상품 미포함",
   };
 
   return (
@@ -348,6 +349,9 @@ function ConnectedAccountRow({
       <span className={`account-state product-${account.product.state}`}>
         {stateLabels[account.product.state]}
       </span>
+      {account.product.state === "missing" && (
+        <ProductCatalogDetails catalog={account.catalog} />
+      )}
     </div>
   );
 }

@@ -261,7 +261,10 @@ export async function startFreePurchase(
   fetchImplementation: typeof fetch = fetch,
 ): Promise<"free"> {
   const isFree = product.isFree || product.price === 0;
-  if (!isFree || !product.sku || !product.offerId) {
+  if (
+    !isFree || !product.sku || !product.offerId ||
+    product.disabled || product.noInventory || product.locked
+  ) {
     throw new AuthError("PURCHASE_NOT_ELIGIBLE");
   }
 
@@ -551,15 +554,25 @@ function normalizeProduct(value: unknown): StoreProduct {
     isFree: product.is_free === true,
     stockAvailable: finiteNumber(product.stockAvailable),
     stockMax: finiteNumber(product.stockMax),
-    noInventory: product.noInventory === true,
-    disabled: product.disabled === true,
-    locked: product.locked === true,
+    noInventory: restrictionFlag(product.noInventory),
+    disabled: restrictionFlag(product.disabled),
+    locked: restrictionFlag(product.locked),
     refreshSeconds: finiteNumber(product.refresh),
     validUntil: typeof product.validUntil === "string" ? product.validUntil : null,
     tags: Array.isArray(product.tags)
       ? product.tags.filter((tag): tag is string => typeof tag === "string")
       : [],
   };
+}
+
+function restrictionFlag(value: unknown): boolean {
+  // The store also sends numeric flags. Only explicit false/empty values clear a
+  // purchase restriction; unknown strings, numbers, or objects remain blocked.
+  if (value === undefined || value === null || value === false || value === 0) {
+    return false;
+  }
+  if (typeof value === "string") return value.trim() !== "" && value !== "0";
+  return true;
 }
 
 function readResponseCookies(headers: Headers): string[] {

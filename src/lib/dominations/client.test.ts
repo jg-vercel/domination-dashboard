@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { DomiNationsCredential } from "@/lib/auth/session";
+import { getProductState } from "@/lib/dashboard/snapshot";
 
 import {
   connectDomiNations,
@@ -425,6 +426,73 @@ describe("DomiNations authentication adapter", () => {
     await expect(getProductsForAccount(credentials, "account-1", fetchMock)).resolves.toEqual([
       expect.objectContaining({ price: 0 }),
     ]);
+  });
+
+  describe.each(["disabled", "noInventory", "locked"] as const)("%s purchase restriction", (flag) => {
+    it.each([
+      { description: "missing", value: undefined, restricted: false },
+      { description: "null", value: null, restricted: false },
+      { description: "boolean false", value: false, restricted: false },
+      { description: "numeric zero", value: 0, restricted: false },
+      { description: "string zero", value: "0", restricted: false },
+      { description: "empty string", value: "", restricted: false },
+      { description: "whitespace-only string", value: " \t\n ", restricted: false },
+      { description: "boolean true", value: true, restricted: true },
+      { description: "numeric one", value: 1, restricted: true },
+      { description: "string one", value: "1", restricted: true },
+      { description: "unknown string", value: "unknown", restricted: true },
+      { description: "string false", value: "false", restricted: true },
+      { description: "noncanonical zero string", value: " 0 ", restricted: true },
+      { description: "another positive number", value: 2, restricted: true },
+      { description: "negative number", value: -1, restricted: true },
+      { description: "NaN", value: Number.NaN, restricted: true },
+      { description: "infinity", value: Number.POSITIVE_INFINITY, restricted: true },
+      { description: "empty array", value: [], restricted: true },
+      { description: "object", value: {}, restricted: true },
+    ])("normalizes $description fail-closed and prevents restricted purchases", async ({ value, restricted }) => {
+      const response = Response.json([]);
+      // Mock the decoded response so NaN/undefined are not changed by JSON serialization.
+      vi.spyOn(response, "json").mockResolvedValue([
+        {
+          name: "Free Legendary Token",
+          google: "token-sku",
+          offerId: "token-offer",
+          price: 0,
+          stockAvailable: 1,
+          stockMax: 1,
+          tags: ["AdditionalSpecials"],
+          [flag]: value,
+        },
+      ]);
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+      const [product] = await getProductsForAccount(credentials, "account-1", fetchMock);
+
+      expect(product?.[flag]).toBe(restricted);
+      expect(getProductState(product!)).toMatchObject({ state: restricted ? "unavailable" : "available" });
+      if (restricted) {
+        const purchaseFetch = vi.fn<typeof fetch>();
+        await expect(startFreePurchase(credentials, "account-1", product!, purchaseFetch)).rejects.toMatchObject({
+          code: "PURCHASE_NOT_ELIGIBLE",
+        });
+        expect(purchaseFetch).not.toHaveBeenCalled();
+      }
+    });
+  });
+
+  it.each([1, "1", "true", "false", {}, [], null, undefined])("does not treat nonboolean is_free (%j) as permission to purchase", async (isFree) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json([
+      { name: "Free Legendary Token", google: "token-sku", offerId: "token-offer", price: 9.99, is_free: isFree },
+    ]));
+
+    const [product] = await getProductsForAccount(credentials, "account-1", fetchMock);
+
+    expect(product?.isFree).toBe(false);
+    const purchaseFetch = vi.fn<typeof fetch>();
+    await expect(startFreePurchase(credentials, "account-1", product!, purchaseFetch)).rejects.toMatchObject({
+      code: "PURCHASE_NOT_ELIGIBLE",
+    });
+    expect(purchaseFetch).not.toHaveBeenCalled();
   });
 
   it("starts only a free purchase with the fixed safe request body", async () => {
