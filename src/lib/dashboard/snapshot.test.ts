@@ -44,6 +44,11 @@ describe("dashboard snapshot", () => {
       expect.objectContaining({ gameAccountId: "shared", name: "Commander 2", age: 11, trophies: 1001 }),
       expect.objectContaining({ gameAccountId: "linked-only", name: "Commander 1", age: 10, trophies: 1000 }),
     ]);
+    expect(accounts.map((account) => account.diagnostics)).toEqual([
+      { directorySource: "listed_only", profileNamePresent: true, profileFieldsPresent: true, profileErrorShape: false },
+      { directorySource: "both", profileNamePresent: true, profileFieldsPresent: true, profileErrorShape: false },
+      { directorySource: "linked_only", profileNamePresent: true, profileFieldsPresent: true, profileErrorShape: false },
+    ]);
     const userInfoCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/user_info"));
     expect(userInfoCalls).toHaveLength(1);
     expect(String(userInfoCalls[0]?.[0])).toBe("https://api.dominationsworld.com/api/dominations/direct-only/user_info");
@@ -89,6 +94,36 @@ describe("dashboard snapshot", () => {
   });
 
   it.each([
+    { payload: {}, errorShape: false },
+    { payload: { error: "private-upstream-error", token: "private-upstream-token" }, errorShape: true },
+  ])("exposes purchase-free profile diagnostics without removing list-only accounts ($payload)", async ({ payload, errorShape }) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetchMock = createDashboardFetch({
+      listedIds: ["private-listed-account"], linkedIds: [],
+      userInfoResponse: () => Response.json(payload),
+    });
+
+    const snapshot = await loadDashboardSnapshot(credentials, fetchMock);
+
+    expect(snapshot).toMatchObject({ ready: true, accountCount: 1 });
+    expect(snapshot.accounts[0]).toMatchObject({
+      name: "Unknown commander", product: { state: "available" },
+      diagnostics: {
+        directorySource: "listed_only", profileNamePresent: false,
+        profileFieldsPresent: false, profileErrorShape: errorShape,
+        exactTargetCandidateCount: 1, distinctSkuOfferCandidateCount: 1,
+      },
+    });
+    expect(info).toHaveBeenCalledWith("Store account diagnostics", {
+      accountIndex: 1, ...snapshot.accounts[0]!.diagnostics,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("private-");
+    expect(JSON.stringify(info.mock.calls)).not.toContain("private-");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("startpurchase"))).toBe(false);
+  });
+
+  it.each([
     { listedIds: ["account-1"], linkedIds: ["account-1", "account-1"] },
     { listedIds: ["account-1", "account-1"], linkedIds: ["account-1"], legacyListedIds: true },
   ])("rejects duplicate IDs within either source: %j", async (directory) => {
@@ -107,6 +142,17 @@ describe("dashboard snapshot", () => {
       ready: false, accountCount: 0, accounts: [],
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not fail an available account read if the new diagnostics logger throws", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => { throw new Error("logger unavailable"); });
+    const fetchMock = createDashboardFetch({ listedIds: [accountIds[0]!], linkedIds: [accountIds[0]!] });
+
+    await expect(loadDashboardSnapshot(credentials, fetchMock)).resolves.toMatchObject({
+      ready: true, accountCount: 1,
+      accounts: [expect.objectContaining({ product: expect.objectContaining({ state: "available" }) })],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("returns only masked account IDs and fail-closed product states", async () => {

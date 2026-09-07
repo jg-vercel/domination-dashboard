@@ -1,0 +1,17 @@
+# Build from application sources only; keep local working material private.
+/.git/
+/.next/
+/node_modules/
+/out/
+/coverage/
+/.vercel/
+.env*
+!.env.example
+*.log
+*.tsbuildinfo
+.DS_Store
+*.swp
+/AGENTS.md
+/asset/
+/docs/
+/*.zip

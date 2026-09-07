@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { StoreProduct } from "@/lib/dominations/client";
+import type { DomiNationsAccount, StoreProduct } from "@/lib/dominations/client";
 
-import { findTargetProduct, getProductState, loadDashboardSnapshot, summarizeProductCatalog } from "./snapshot";
+import { findTargetProduct, getAccountStoreDiagnostics, getProductState, loadDashboardSnapshot, summarizeProductCatalog } from "./snapshot";
 
 const product: StoreProduct = {
   name: "Other special", sku: "private-sku", offerId: "private-offer",
@@ -11,7 +11,63 @@ const product: StoreProduct = {
   locked: false, refreshSeconds: 0, validUntil: null, tags: ["AdditionalSpecials"],
 };
 
+const account: DomiNationsAccount = {
+  gameAccountId: "private-account", name: "Unknown commander", age: null, trophies: null, clientVersion: null,
+};
+
 describe("product catalog diagnostics", () => {
+  it("counts duplicate exact-name candidates and distinct SKU/offer pairs without changing the selected item", () => {
+    const first = { ...product, name: "Free Legendary Token!", sku: "private-first", offerId: "", price: 0 };
+    const duplicate = { ...first, name: "Free Legendary Token" };
+    const differentOffer = { ...first, offerId: "private-second-offer", stockAvailable: 0 };
+    const differentSku = { ...first, sku: "private-second-sku" };
+    const products = [product, first, duplicate, differentOffer, differentSku];
+
+    const diagnostics = getAccountStoreDiagnostics(account, products);
+
+    expect(diagnostics).toMatchObject({
+      directorySource: null, profileNamePresent: null, profileFieldsPresent: null, profileErrorShape: null,
+      exactTargetCandidateCount: 4, distinctSkuOfferCandidateCount: 3,
+      selected: { stockAvailable: 1, stockMax: 1, skuPresent: true, offerIdPresent: false, stockGuardConflict: false },
+    });
+    expect(findTargetProduct(products)).toBe(first);
+    expect(JSON.stringify(diagnostics)).not.toContain("private-");
+    expect(JSON.stringify(diagnostics)).not.toContain("Unknown commander");
+  });
+
+  it.each([
+    { stockMax: 0, stockAvailable: 0, conflict: true },
+    { stockMax: null, stockAvailable: -1, conflict: true },
+    { stockMax: 1, stockAvailable: 0, conflict: false },
+    { stockMax: 0, stockAvailable: 1, conflict: false },
+    { stockMax: 0, stockAvailable: null, conflict: false },
+  ])("reports the existing stock guard anomaly without changing its state ($stockMax/$stockAvailable)", ({ stockMax, stockAvailable, conflict }) => {
+    const candidate = { ...product, name: "Free Legendary Token!", price: 0, stockMax, stockAvailable, refreshSeconds: 100 };
+    const before = getProductState(candidate);
+
+    expect(getAccountStoreDiagnostics(account, [candidate]).selected).toMatchObject({
+      stockMax, stockAvailable, refreshSeconds: 100, stockGuardConflict: conflict,
+    });
+    expect(getProductState(candidate)).toEqual(before);
+    if (conflict) expect(before.state).toBe("available");
+  });
+
+  it("reports each selected restriction without making a restricted zero-stock product an availability conflict", () => {
+    const candidate = { ...product, name: "Free Legendary Token!", stockMax: 0, stockAvailable: 0, disabled: true, locked: true, noInventory: true, tags: [], sku: "" };
+
+    expect(getAccountStoreDiagnostics(account, [candidate]).selected).toMatchObject({
+      disabled: true, locked: true, noInventory: true, isFree: false,
+      sectionVerified: false, skuPresent: false, offerIdPresent: true, stockGuardConflict: false,
+    });
+  });
+
+  it("reports no selected target for missing catalogs without inventing profile information from a name", () => {
+    expect(getAccountStoreDiagnostics(account, [])).toEqual({
+      directorySource: null, profileNamePresent: null, profileFieldsPresent: null, profileErrorShape: null,
+      exactTargetCandidateCount: 0, distinctSkuOfferCandidateCount: 0, selected: null,
+    });
+  });
+
   it.each(["Free Legendary Token", "Free Legendary Token!", "  free legendary token!  "])("selects only the known target title %j and reports it consistently", (name) => {
     const target = { ...product, name, price: 0 };
 
@@ -110,11 +166,14 @@ describe("product catalog diagnostics", () => {
     const snapshot = await loadDashboardSnapshot({ accessToken: "private-token", cookies: ["private-cookie"], userId: "private-user", xsollaId: "private-xsolla" }, fetchMock);
 
     expect(snapshot.accounts[0]?.product.state).toBe("missing");
-    expect(info).toHaveBeenCalledExactlyOnceWith("Store product lookup", {
+    expect(info).toHaveBeenCalledWith("Store product lookup", {
       accountIndex: 1, productCount: 1, namedProductCount: 1, webSpecialsCount: 1,
       freeProductCount: 0, purchasableSkuCount: 1, disabledProductCount: 0,
       offerIdCount: 1,
       exactTargetNameCount: 0, whitespaceFoldedTargetNameCount: 0,
+    });
+    expect(info).toHaveBeenCalledWith("Store account diagnostics", {
+      accountIndex: 1, ...snapshot.accounts[0]!.diagnostics,
     });
     expect(JSON.stringify(info.mock.calls)).not.toMatch(/private|Private/);
     expect(fetchMock).toHaveBeenCalledTimes(3);

@@ -7,6 +7,7 @@ import { AuthError } from "@/lib/auth/errors";
 import type { AppSession, DomiNationsCredential } from "@/lib/auth/session";
 import {
   findTargetProduct,
+  getAccountStoreDiagnostics,
   getProductState,
   loadAccountDirectory,
 } from "@/lib/dashboard/snapshot";
@@ -20,6 +21,7 @@ import type { ClaimStore } from "@/lib/idempotency/redis-rest";
 
 import { getClaimCycle, type ClaimCycle } from "./cycle";
 import { recordClaimAudit } from "./audit";
+import { ClaimDiagnostics, logClaimDiagnostic } from "./diagnostics";
 import { BATCH_LOCK_TTL_SECONDS, ClaimPacer, ClaimPacingDeferredError, MAX_PURCHASE_ATTEMPTS } from "./pacing";
 import { findVerifiedRateLimitRepairs, isVerifiedIncidentRecord, VERIFIED_RATE_LIMIT_INCIDENT } from "./verified-rate-limit-repair";
 
@@ -107,6 +109,7 @@ export async function claimFreeLegendaryTokenForAllAccounts(
   }
 
   try {
+    const diagnostics = new ClaimDiagnostics(dependencies.clock);
     const pacer = new ClaimPacer(
       dependencies.store,
       `domi:claim:pace:${digest(session.admin.subject)}`,
@@ -132,6 +135,8 @@ export async function claimFreeLegendaryTokenForAllAccounts(
         createOwnerToken,
         pacer,
         verifiedRepairs.has(account.gameAccountId),
+        diagnostics,
+        results.length + 1,
       );
       results.push(result);
       // Only fixed, public outcome codes: never identifiers, credentials or
@@ -172,6 +177,8 @@ async function claimAccount(
   createOwnerToken: () => string,
   pacer: ClaimPacer,
   verifiedRateLimitRepair: boolean,
+  diagnostics: ClaimDiagnostics,
+  accountIndex: number,
 ): Promise<AccountClaimResult> {
   const accountHash = digest(
     `${session.admin.subject}:${account.gameAccountId}:Free Legendary Token`,
@@ -250,6 +257,12 @@ async function claimAccount(
     }
     let target = findTargetProduct(products);
     const targetState = getProductState(target);
+    logClaimDiagnostic("Free token catalog check", {
+      accountIndex,
+      phase: "initial",
+      selectedState: targetState.state,
+      ...getAccountStoreDiagnostics(account, products),
+    });
 
     // Current availability is a condition for the user-authorized, one-time
     // recovery attempt, not proof that the original purchase failed.
@@ -276,7 +289,15 @@ async function claimAccount(
         // Availability can change while backing off. Never retry using a
         // stale paid, locked, exhausted, or otherwise unverified listing.
         const refreshed = await getProductsForAccount(session.dominations, account.gameAccountId, fetchImplementation);
+        const previousTarget = target;
         target = findTargetProduct(refreshed);
+        logClaimDiagnostic("Free token catalog check", {
+          accountIndex,
+          phase: "after_rate_limit",
+          selectedState: getProductState(target).state,
+          selectionChangedSincePreviousCheck: previousTarget?.sku !== target?.sku || previousTarget?.offerId !== target?.offerId,
+          ...getAccountStoreDiagnostics(account, refreshed),
+        });
         if (!target || getProductState(target).state !== "available") {
           const result: AccountClaimResult = {
             ...publicAccount, status: "failed", reason: "STORE_ITEM_UNAVAILABLE",
@@ -302,13 +323,16 @@ async function claimAccount(
       }
       purchaseSent = true;
       definitelyNotPurchased = false;
+      const attemptContext = diagnostics.beginAttempt(accountIndex, attempt + 1);
       try {
         await startFreePurchase(session.dominations, account.gameAccountId, target, fetchImplementation);
+        diagnostics.freeAcknowledged(attemptContext);
         break;
       } catch (error) {
+        diagnostics.rejected(attemptContext, error);
         if (!(error instanceof AuthError) || error.code !== "PURCHASE_RATE_LIMITED") throw error;
         const delayMs = Math.max(error.diagnostic?.retryAfterMs ?? 0, 10_000 * 2 ** attempt);
-        console.info("Free token rate limit wait", { attempt: attempt + 1, delayMs });
+        logClaimDiagnostic("Free token rate limit wait", { accountIndex, attempt: attempt + 1, delayMs });
         await pacer.defer(delayMs);
         definitelyNotPurchased = true;
         if (attempt + 1 === MAX_PURCHASE_ATTEMPTS) throw error;

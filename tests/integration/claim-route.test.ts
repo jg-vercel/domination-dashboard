@@ -232,7 +232,225 @@ describe("claim Route Handler safety boundary", () => {
     expect(redisFetch.mock.calls.some(([, init]) => JSON.parse(String(init?.body))[0] === "EVAL")).toBe(true);
     expect(redisFetch.mock.calls.filter(([input]) => new URL(String(input)).pathname === "/pipeline")).toHaveLength(2);
   });
+
+  it.each([
+    { order: [0, 1, 2, 3], completed: [] },
+    { order: [3, 2, 0, 1], completed: [3, 2] },
+  ])("paces every eligible account through the authenticated route using its own refreshed SKU and offer: %j", async ({ order, completed }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T00:05:00.000Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubAuthEnvironment();
+    const { sealed, csrfToken, redisValues } = await createTestSession();
+    const allIds = ["game-account-0001", "game-account-0002", "game-account-0003", "game-account-0004"];
+    const ids = order.map((index) => allIds[index]!);
+    const completedIds = new Set(completed.map((index) => allIds[index]!));
+    const eligibleIds = ids.filter((id) => !completedIds.has(id));
+    const cycle = getClaimCycle();
+    const ledgerKeys = new Map(ids.map((id) => [id, integrationLedgerKey(cycle.id, id)]));
+    for (const id of completedIds) {
+      redisValues.set(ledgerKeys.get(id)!, JSON.stringify({
+        version: 2, status: "success", reason: "FREE_PURCHASE_ACCEPTED", recordedAt: "2026-09-08T00:01:00.000Z",
+      }));
+    }
+    const originals = new Map([...completedIds].map((id) => [id, redisValues.get(ledgerKeys.get(id)!)]));
+    const mock = createDistinctAccountClaimFetch(redisValues, ids, (id, attempt) => {
+      if (id !== eligibleIds[0] && attempt === 1) {
+        const retryAfterSeconds = eligibleIds.indexOf(id) % 2 === 1 ? 3 : 12;
+        return new Response("mock rate limit", { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } });
+      }
+      return Response.json({ success: true, orderAccessToken: "free" });
+    });
+    vi.stubGlobal("fetch", mock.fetchMock);
+    const batchStartedAt = Date.now();
+
+    const firstResponse = await completeMockClaim(claimAll(createRequest({ sealedSession: sealed, csrfToken })));
+    const first = await firstResponse.json() as BatchClaimResult & { ok: boolean };
+
+    const expectedIds = eligibleIds.flatMap((id, index) => index === 0 ? [id] : [id, id]);
+    expect(firstResponse.status).toBe(200);
+    expect(firstResponse.headers.get("cache-control")).toBe("no-store");
+    expect(first).toMatchObject({ ok: true, auditRecorded: true, summary: { success: 4, failed: 0, uncertain: 0 } });
+    expect(first.results.map((row) => Boolean(row.replayed))).toEqual(ids.map((id) => completedIds.has(id)));
+    expect(mock.purchases.map(({ id }) => id)).toEqual(expectedIds);
+    expect(mock.catalogs.map(({ id }) => id)).toEqual(expectedIds);
+    expect(mock.purchases[0]!.startedAt - batchStartedAt).toBe(250);
+    const attemptLogs = vi.mocked(console.info).mock.calls
+      .filter(([event]) => event === "Free token attempt started").map(([, fields]) => fields);
+    expect(attemptLogs).toHaveLength(expectedIds.length);
+    expectedIds.forEach((id, index) => {
+      expect(attemptLogs[index]).toMatchObject({
+        accountIndex: ids.indexOf(id) + 1,
+        purchaseOrdinal: index + 1,
+        firstPurchaseInBatch: index === 0,
+        accountAttempt: expectedIds.slice(0, index + 1).filter((value) => value === id).length,
+        sincePreviousAttemptMs: index === 0 ? null : mock.purchases[index]!.startedAt - mock.purchases[index - 1]!.startedAt,
+        sincePreviousResponseMs: index === 0 ? null : mock.purchases[index]!.startedAt - mock.purchases[index - 1]!.respondedAt,
+      });
+    });
+    for (let index = 1; index < mock.purchases.length; index += 1) {
+      const previous = mock.purchases[index - 1]!;
+      const current = mock.purchases[index]!;
+      expect(current.startedAt).toBe(previous.status === 429
+        ? previous.respondedAt + Math.max(10_000, previous.retryAfterMs) + 250
+        : previous.startedAt + 5_000 + 250);
+      if (previous.status === 429) {
+        expect(current.id).toBe(previous.id);
+        expect(current.startedAt - previous.respondedAt).toBeGreaterThanOrEqual(previous.retryAfterMs);
+      }
+    }
+    for (const id of completedIds) expect(redisValues.get(ledgerKeys.get(id)!)).toBe(originals.get(id));
+    const catalogReadsBeforeReplay = [...mock.catalogs];
+
+    const secondResponse = await completeMockClaim(claimAll(createRequest({ sealedSession: sealed, csrfToken })));
+    const second = await secondResponse.json() as BatchClaimResult & { ok: boolean };
+
+    expect(secondResponse.status).toBe(200);
+    expect(second.summary).toMatchObject({ success: 4, failed: 0, uncertain: 0 });
+    expect(second.results.every((row) => row.replayed === true)).toBe(true);
+    expect(mock.purchases.map(({ id }) => id)).toEqual(expectedIds);
+    expect(mock.catalogs).toEqual(catalogReadsBeforeReplay);
+    expect(vi.mocked(console.info).mock.calls.filter(([event]) => event === "Free token attempt started")).toHaveLength(expectedIds.length);
+    expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toMatch(/dominations-bearer|google-refresh-token|redis-secret-token|game-account-|own-sku-|own-offer-/);
+    expect(JSON.stringify({ first, second })).not.toMatch(/dominations-bearer|google-refresh-token|redis-secret-token|own-sku-|own-offer-/);
+  });
+
+  it("reports the fourth account's post-429 ItemNotAvailable as retryable failure and sends only its new product on a later click", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T00:05:00.000Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubAuthEnvironment();
+    const { sealed, csrfToken, redisValues } = await createTestSession();
+    const ids = ["game-account-0001", "game-account-0002", "game-account-0003", "game-account-0004"];
+    const lastId = ids[3]!;
+    const cycle = getClaimCycle();
+    const mock = createDistinctAccountClaimFetch(redisValues, ids, (id, attempt) => {
+      if (id !== lastId) return Response.json({ success: true, orderAccessToken: "free" });
+      if (attempt === 1) return new Response("mock rate limit", { status: 429, headers: { "Retry-After": "12" } });
+      return Response.json({ success: false, failreason: "ItemNotAvailable", orderAccessToken: null });
+    });
+    vi.stubGlobal("fetch", mock.fetchMock);
+
+    const firstResponse = await completeMockClaim(claimAll(createRequest({ sealedSession: sealed, csrfToken })));
+    const first = await firstResponse.json() as BatchClaimResult & { ok: boolean };
+
+    expect(firstResponse.status).toBe(200);
+    expect(first).toMatchObject({ ok: true, auditRecorded: true, summary: { success: 3, failed: 1, uncertain: 0 } });
+    expect(first.results[3]).toMatchObject({ status: "failed", reason: "STORE_ITEM_UNAVAILABLE" });
+    expect(first.results[3]!.replayed).toBeUndefined();
+    expect(mock.purchases.map(({ id }) => id)).toEqual([...ids, lastId]);
+    expect(mock.purchases[4]!.startedAt - mock.purchases[3]!.respondedAt).toBe(12_250);
+    expect(vi.mocked(console.info).mock.calls.filter(([event]) => event === "Free token attempt completed").at(-1)?.[1]).toMatchObject({
+      accountIndex: 4, accountAttempt: 2, purchaseOrdinal: 5, firstPurchaseInBatch: false,
+      outcome: "rejected", httpStatus: 200, purchaseFailure: "ItemNotAvailable",
+    });
+    const successfulRecords = ids.slice(0, 3).map((id) => redisValues.get(integrationLedgerKey(cycle.id, id)));
+    expect(JSON.parse(redisValues.get(integrationLedgerKey(cycle.id, lastId))!)).toMatchObject({
+      version: 2, status: "failed", reason: "STORE_ITEM_UNAVAILABLE",
+    });
+
+    await vi.advanceTimersByTimeAsync(14_000);
+    const secondResponse = await completeMockClaim(claimAll(createRequest({ sealedSession: sealed, csrfToken })));
+    const second = await secondResponse.json() as BatchClaimResult & { ok: boolean };
+
+    expect(secondResponse.status).toBe(200);
+    expect(second.summary).toMatchObject({ success: 3, failed: 1, uncertain: 0 });
+    expect(second.results.slice(0, 3).every((row) => row.replayed === true)).toBe(true);
+    expect(second.results[3]).toMatchObject({ status: "failed", reason: "STORE_ITEM_UNAVAILABLE" });
+    expect(second.results[3]!.replayed).toBeUndefined();
+    expect(mock.purchases.map(({ id }) => id)).toEqual([...ids, lastId, lastId]);
+    expect(mock.catalogs.map(({ id }) => id)).toEqual([...ids, lastId, lastId]);
+    expect(vi.mocked(console.info).mock.calls.filter(([event]) => event === "Free token attempt completed").at(-1)?.[1]).toMatchObject({
+      accountIndex: 4, accountAttempt: 1, purchaseOrdinal: 1, firstPurchaseInBatch: true,
+      outcome: "rejected", httpStatus: 200, purchaseFailure: "ItemNotAvailable",
+    });
+    expect(mock.purchases.filter(({ id }) => id === lastId).map(({ sku }) => sku)).toEqual([
+      "own-sku-0004-revision-1", "own-sku-0004-revision-2", "own-sku-0004-revision-3",
+    ]);
+    for (const [index, id] of ids.slice(0, 3).entries()) {
+      expect(redisValues.get(integrationLedgerKey(cycle.id, id))).toBe(successfulRecords[index]);
+    }
+    expect([...redisValues.keys()].some((key) => key.includes(":account:") || key.includes(":batch:"))).toBe(false);
+    expect(JSON.stringify({ first, second })).not.toMatch(/dominations-bearer|google-refresh-token|redis-secret-token|own-sku-|own-offer-/);
+  });
 });
+
+function integrationLedgerKey(cycleId: string, gameAccountId: string): string {
+  const hash = createHash("sha256").update(`google-subject:${gameAccountId}:Free Legendary Token`).digest("hex").slice(0, 24);
+  return `domi:claim:ledger:${cycleId}:${hash}`;
+}
+
+// Advance only fake time, including mocked network latency. The settlement
+// flag also handles the route's asynchronous session decryption without
+// advancing every test by an arbitrary multi-minute interval.
+async function completeMockClaim(pending: Promise<Response>): Promise<Response> {
+  let settled = false;
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  for (let step = 0; !settled && step < 3_000; step += 1) {
+    await vi.advanceTimersByTimeAsync(100);
+  }
+  if (!settled) throw new Error("Mock claim exceeded the fake execution budget");
+  return pending;
+}
+
+function createDistinctAccountClaimFetch(
+  redisValues: Map<string, string>,
+  ids: string[],
+  respond: (id: string, attempt: number) => Response,
+) {
+  const redisFetch = createRedisFetch(redisValues);
+  const productReads = new Map<string, number>();
+  const catalogs: Array<{ id: string; sku: string; offerId: string }> = [];
+  const purchases: Array<{
+    id: string; sku: string; offerId: string; startedAt: number; respondedAt: number; status: number; retryAfterMs: number;
+  }> = [];
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.origin === "https://redis.example") return redisFetch(input, init);
+    if (url.origin !== "https://api.dominationsworld.com") throw new Error("Unexpected mock upstream");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer dominations-bearer");
+    expect(new Headers(init?.headers).get("cookie")).toBe("domi=session");
+    if (url.pathname === "/api/gameident/dom/list") {
+      return Response.json({ gameIds: Object.fromEntries(ids.map((id) => [id, {}])) });
+    }
+    if (url.pathname === "/api/dominations/linked_user_info") {
+      return Response.json({ accounts: ids.map((gameAccountId, index) => ({ gameAccountId, name: `Commander ${index + 1}` })) });
+    }
+    const body = JSON.parse(String(init?.body)) as {
+      gameAccountId: string; itemSku?: string; offerId?: string; quantity?: number;
+    };
+    const id = body.gameAccountId;
+    expect(ids).toContain(id);
+    if (url.pathname === "/api/xsollastore/getproducts") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const readCount = (productReads.get(id) ?? 0) + 1;
+      productReads.set(id, readCount);
+      const sku = `own-sku-${id.slice(-4)}-revision-${readCount}`;
+      const offerId = Number(id.slice(-1)) % 2 === 0 ? "" : `own-offer-${id.slice(-4)}-revision-${readCount}`;
+      catalogs.push({ id, sku, offerId });
+      return Response.json(JSON.stringify([{
+        name: "Free Legendary Token!", google: sku, offerId, price: 0, currency: "USD", is_free: true,
+        stockAvailable: 1, stockMax: 1, tags: ["AdditionalSpecials"],
+      }]));
+    }
+    if (url.pathname === "/api/xsollastore/startpurchase") {
+      const latest = catalogs.findLast((entry) => entry.id === id)!;
+      expect(body).toMatchObject({ gameAccountId: id, itemSku: latest.sku, offerId: latest.offerId, quantity: 1 });
+      const attempt = purchases.filter((entry) => entry.id === id).length + 1;
+      const startedAt = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const response = respond(id, attempt);
+      purchases.push({
+        id, sku: body.itemSku!, offerId: body.offerId!, startedAt, respondedAt: Date.now(),
+        status: response.status, retryAfterMs: Number(response.headers.get("Retry-After") ?? 0) * 1_000,
+      });
+      return response;
+    }
+    throw new Error("Unexpected mock endpoint");
+  });
+  return { fetchMock, purchases, catalogs };
+}
 
 function stubAuthEnvironment() {
   vi.stubEnv("GOOGLE_CLIENT_ID", "google-client-id");

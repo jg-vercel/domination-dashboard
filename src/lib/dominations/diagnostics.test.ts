@@ -31,6 +31,7 @@ describe("safe DomiNations connection diagnostics", () => {
 
     await expect(getGameAccountInfo(credentials, id, fetchMock)).resolves.toEqual({
       gameAccountId: id, name: "Commander", age: 12, trophies: 1234, clientVersion: "7000",
+      diagnostics: { profileNamePresent: true, profileFieldsPresent: true, profileErrorShape: false },
     });
     const [url, options] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`https://api.dominationsworld.com/api/dominations/${encodeURIComponent(id)}/user_info`);

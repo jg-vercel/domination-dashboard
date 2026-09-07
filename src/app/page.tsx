@@ -6,6 +6,7 @@ import { ClaimAuditList } from "@/components/claim-audit-list";
 import { SessionKeepalive } from "@/components/session-keepalive";
 import { DominationLinkPanel } from "@/components/domination-link-panel";
 import { ProductCatalogDetails } from "@/components/product-catalog-details";
+import { AccountStoreDiagnostics } from "@/components/account-store-diagnostics";
 import {
   APP_SESSION_COOKIE,
   getAuthConfig,
@@ -346,6 +347,7 @@ function ConnectedAccountRow({
       {account.product.state === "missing" && (
         <ProductCatalogDetails catalog={account.catalog} />
       )}
+      <AccountStoreDiagnostics account={account} />
     </div>
   );
 }

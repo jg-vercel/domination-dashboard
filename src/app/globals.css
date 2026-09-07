@@ -758,6 +758,22 @@ main {
   font-weight: 600;
 }
 
+.account-store-diagnostics dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 10px 0;
+}
+
+.account-store-diagnostics dd {
+  margin: 0;
+  color: #505e74;
+}
+
+.account-store-diagnostics[open] > summary {
+  margin-bottom: 8px;
+}
+
 .product-catalog-list {
   display: grid;
   gap: 6px;

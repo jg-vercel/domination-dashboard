@@ -14,12 +14,20 @@ export const WEB_STORE_PROJECT_ID = 277239;
 
 const UPSTREAM_TIMEOUT_MS = 10_000;
 
+export type AccountDirectorySource = "listed_only" | "linked_only" | "both";
+
 export interface DomiNationsAccount {
   gameAccountId: string;
   name: string;
   age: number | null;
   trophies: number | null;
   clientVersion: string | null;
+  diagnostics?: {
+    directorySource?: AccountDirectorySource;
+    profileNamePresent?: boolean;
+    profileFieldsPresent?: boolean;
+    profileErrorShape?: boolean;
+  };
 }
 
 export interface StoreProduct {
@@ -592,6 +600,20 @@ function normalizeAccount(value: unknown): DomiNationsAccount {
   if (typeof account.gameAccountId !== "string" || !account.gameAccountId) {
     throw new AuthError("UPSTREAM_UNAVAILABLE");
   }
+  const profileNamePresent = typeof account.name === "string" && account.name.trim().length > 0;
+  // Presence is measured from the response, never from the display-name fallback.
+  // These diagnostic flags do not establish whether this is an eligible account.
+  const profileFieldsPresent = profileNamePresent ||
+    finiteNumber(account.age) !== null || finiteNumber(account.trophies) !== null ||
+    (typeof account.clientMajorVersion === "string" && account.clientMajorVersion.trim().length > 0);
+  const profileErrorShape = account.success === false ||
+    ["error", "errors", "errorReason", "failreason"].some((key) => {
+      const field = account[key];
+      if (Array.isArray(field)) return field.length > 0;
+      if (isRecord(field)) return Object.keys(field).length > 0;
+      return field !== undefined && field !== null && field !== false && field !== 0 &&
+        !(typeof field === "string" && field.trim().length === 0);
+    });
 
   return {
     gameAccountId: account.gameAccountId,
@@ -602,6 +624,7 @@ function normalizeAccount(value: unknown): DomiNationsAccount {
       typeof account.clientMajorVersion === "string"
         ? account.clientMajorVersion
         : null,
+    diagnostics: { profileNamePresent, profileFieldsPresent, profileErrorShape },
   };
 }
 

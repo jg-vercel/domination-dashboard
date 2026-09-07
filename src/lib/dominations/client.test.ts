@@ -7,6 +7,7 @@ import { getProductState } from "@/lib/dashboard/snapshot";
 import {
   connectDomiNations,
   connectDomiNationsWithXsollaToken,
+  getGameAccountInfo,
   getLinkedAccounts,
   getProductsForAccount,
   listGameAccountIds,
@@ -530,6 +531,50 @@ describe("DomiNations authentication adapter", () => {
         isFree: true,
       }),
     ]);
+  });
+
+  it.each([
+    { payload: {}, namePresent: false, fieldsPresent: false, errorShape: false },
+    { payload: { error: "private-error-detail" }, namePresent: false, fieldsPresent: false, errorShape: true },
+    { payload: { success: false, message: "private-error-detail" }, namePresent: false, fieldsPresent: false, errorShape: true },
+    { payload: { errorReason: "private-error-detail" }, namePresent: false, fieldsPresent: false, errorShape: true },
+    { payload: { errors: [], error: {} }, namePresent: false, fieldsPresent: false, errorShape: false },
+    { payload: { errors: ["private-error-detail"] }, namePresent: false, fieldsPresent: false, errorShape: true },
+    { payload: { error: { detail: "private-error-detail" } }, namePresent: false, fieldsPresent: false, errorShape: true },
+    { payload: { name: "Unknown commander" }, namePresent: true, fieldsPresent: true, errorShape: false },
+    { payload: { name: " \t ", age: 0 }, namePresent: false, fieldsPresent: true, errorShape: false },
+    { payload: { name: null, age: null, trophies: " " }, namePresent: false, fieldsPresent: false, errorShape: false },
+    { payload: { name: 1, trophies: 12 }, namePresent: false, fieldsPresent: true, errorShape: false },
+    { payload: { clientMajorVersion: "12", errorReason: "", error: null }, namePresent: false, fieldsPresent: true, errorShape: false },
+  ])("reports raw profile presence without changing acceptance ($payload)", async ({ payload, namePresent, fieldsPresent, errorShape }) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(payload));
+
+    const account = await getGameAccountInfo(credentials, "requested-account", fetchMock);
+
+    expect(account).toMatchObject({
+      gameAccountId: "requested-account",
+      diagnostics: { profileNamePresent: namePresent, profileFieldsPresent: fieldsPresent, profileErrorShape: errorShape },
+    });
+    expect(JSON.stringify(account.diagnostics)).not.toContain("private-");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("GET");
+    if (!("name" in payload) || typeof payload.name !== "string") {
+      expect(account.name).toBe("Unknown commander");
+    }
+  });
+
+  it("distinguishes a supplied Unknown commander name from the fallback in linked profiles", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      accounts: [
+        { gameAccountId: "missing-name" },
+        { gameAccountId: "provided-name", name: "Unknown commander" },
+      ],
+    }));
+
+    const accounts = await getLinkedAccounts(credentials, fetchMock);
+
+    expect(accounts.map((account) => account.name)).toEqual(["Unknown commander", "Unknown commander"]);
+    expect(accounts.map((account) => account.diagnostics?.profileNamePresent)).toEqual([false, true]);
   });
 
   it("maps a 401 to session expiry without returning the upstream body", async () => {

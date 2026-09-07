@@ -682,6 +682,160 @@ describe("all-account claim service", () => {
     expect(time.sleep.mock.calls.map(([ms]) => ms)).toEqual([12_000, 5_000]);
   });
 
+  it.each([
+    { order: [0, 1, 2, 3], completed: [] },
+    { order: [0, 1, 2, 3], completed: [0] },
+    { order: [3, 1, 0, 2], completed: [3, 1] },
+    { order: [1, 3, 0, 2], completed: [0] },
+  ])("handles the first eligible account, not a fixed directory index, with distinct refreshed products: %j", async ({ order, completed }) => {
+    const allIds = [...accountIds, "game-account-0004"];
+    const ids = order.map((index) => allIds[index]!);
+    const completedIds = new Set(completed.map((index) => allIds[index]!));
+    const eligibleIds = ids.filter((id) => !completedIds.has(id));
+    const store = new MemoryClaimStore();
+    for (const id of completedIds) {
+      store.values.set(ledgerKey(id), JSON.stringify({
+        version: 2, status: "success", reason: "FREE_PURCHASE_ACCEPTED",
+        recordedAt: "2026-08-28T00:00:00Z",
+      }));
+    }
+    const originals = new Map([...completedIds].map((id) => [id, store.values.get(ledgerKey(id))]));
+    const time = createPacingClock();
+    const catalogLatency = 250;
+    const responseLatency = 700;
+    const latestProducts = new Map<string, { google: string; offerId: string }>();
+    const attempts: Array<{ id: string; startedAt: number; respondedAt: number; status: number; retryAfterMs: number }> = [];
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({
+      ids, allAvailable: true,
+      onProductRead: (id, readCount) => {
+        time.advance(catalogLatency);
+        const product = {
+          google: `own-sku-${id.slice(-4)}-revision-${readCount}`,
+          offerId: Number(id.slice(-1)) % 2 === 0 ? "" : `own-offer-${id.slice(-4)}-revision-${readCount}`,
+        };
+        latestProducts.set(id, product);
+        return product;
+      },
+      onPurchase: (id, accountAttempt, body) => {
+        const product = latestProducts.get(id)!;
+        expect(body).toMatchObject({ gameAccountId: id, itemSku: product.google, offerId: product.offerId, quantity: 1 });
+        const startedAt = time.clock();
+        time.advance(responseLatency);
+        const rejected = id !== eligibleIds[0] && accountAttempt === 1;
+        const retryAfterMs = eligibleIds.indexOf(id) % 2 === 1 ? 3_000 : 12_000;
+        attempts.push({ id, startedAt, respondedAt: time.clock(), status: rejected ? 429 : 200, retryAfterMs });
+        return rejected
+          ? new Response("mock rate limit", { status: 429, headers: { "Retry-After": String(retryAfterMs / 1_000) } })
+          : Response.json({ success: true, orderAccessToken: "free" });
+      },
+    });
+    const dependencies = {
+      store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"),
+      clock: time.clock, sleep: time.sleep,
+    };
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    const expectedIds = eligibleIds.flatMap((id, index) => index === 0 ? [id] : [id, id]);
+    expect(purchaseAccounts).toEqual(expectedIds);
+    expect(result.summary).toMatchObject({ success: 4, failed: 0, uncertain: 0 });
+    expect(result.results.map((row) => Boolean(row.replayed))).toEqual(ids.map((id) => completedIds.has(id)));
+    expect(attempts[0]!.startedAt).toBe(catalogLatency);
+    for (let index = 1; index < attempts.length; index += 1) {
+      const previous = attempts[index - 1]!;
+      const current = attempts[index]!;
+      const expectedAt = previous.status === 429
+        ? previous.respondedAt + Math.max(10_000, previous.retryAfterMs) + catalogLatency
+        : previous.startedAt + 5_000 + catalogLatency;
+      expect(current.startedAt).toBe(expectedAt);
+      expect(current.startedAt - previous.startedAt).toBeGreaterThanOrEqual(5_000);
+      if (previous.status === 429) {
+        expect(current.id).toBe(previous.id);
+        expect(current.startedAt - previous.respondedAt).toBeGreaterThanOrEqual(previous.retryAfterMs);
+      }
+    }
+    for (const id of ids) {
+      expect(productReads.get(id) ?? 0).toBe(completedIds.has(id) ? 0 : id === eligibleIds[0] ? 1 : 2);
+      if (completedIds.has(id)) expect(store.values.get(ledgerKey(id))).toBe(originals.get(id));
+    }
+
+    const catalogReadsBeforeReplay = new Map(productReads);
+    const replay = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(replay.summary).toMatchObject({ success: 4, failed: 0, uncertain: 0 });
+    expect(replay.results.every((row) => row.replayed === true)).toBe(true);
+    expect(purchaseAccounts).toEqual(expectedIds);
+    expect(productReads).toEqual(catalogReadsBeforeReplay);
+  });
+
+  it("stops automatic retries on the fourth account's explicit ItemNotAvailable and retries only its own fresh product on a later click", async () => {
+    const ids = [...accountIds, "game-account-0004"];
+    const lastId = ids[3]!;
+    const store = new MemoryClaimStore();
+    const time = createPacingClock();
+    const latestProducts = new Map<string, { google: string; offerId: string }>();
+    const attempts: Array<{ id: string; sku: string; startedAt: number; respondedAt: number; status: number }> = [];
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({
+      ids, allAvailable: true,
+      onProductRead: (id, readCount) => {
+        time.advance(350);
+        const product = {
+          google: `own-sku-${id.slice(-4)}-revision-${readCount}`,
+          offerId: id === ids[1] ? "" : `own-offer-${id.slice(-4)}-revision-${readCount}`,
+        };
+        latestProducts.set(id, product);
+        return product;
+      },
+      onPurchase: (id, accountAttempt, body) => {
+        const product = latestProducts.get(id)!;
+        expect(body).toMatchObject({ gameAccountId: id, itemSku: product.google, offerId: product.offerId, quantity: 1 });
+        const startedAt = time.clock();
+        time.advance(950);
+        const rateLimited = id === lastId && accountAttempt === 1;
+        attempts.push({ id, sku: product.google, startedAt, respondedAt: time.clock(), status: rateLimited ? 429 : 200 });
+        if (rateLimited) return new Response("mock rate limit", { status: 429, headers: { "Retry-After": "12" } });
+        return id === lastId
+          ? Response.json({ success: false, failreason: "ItemNotAvailable", orderAccessToken: null })
+          : Response.json({ success: true, orderAccessToken: "free" });
+      },
+    });
+    const dependencies = {
+      store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"),
+      clock: time.clock, sleep: time.sleep,
+    };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(purchaseAccounts).toEqual([...ids, lastId]);
+    expect(attempts.map(({ startedAt }) => startedAt)).toEqual([350, 5_700, 11_050, 16_400, 29_700]);
+    expect(attempts[4]!.startedAt - attempts[3]!.respondedAt).toBe(12_350);
+    expect(first.summary).toMatchObject({ success: 3, failed: 1, uncertain: 0 });
+    expect(first.results[3]).toMatchObject({ status: "failed", reason: "STORE_ITEM_UNAVAILABLE" });
+    expect(first.results[3]!.replayed).toBeUndefined();
+    expect(productReads.get(lastId)).toBe(2);
+    expect(JSON.parse(store.values.get(ledgerKey(lastId))!)).toMatchObject({
+      version: 2, status: "failed", reason: "STORE_ITEM_UNAVAILABLE",
+    });
+    const successfulRecords = ids.slice(0, 3).map((id) => store.values.get(ledgerKey(id)));
+
+    time.advance(14_000);
+    const second = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(purchaseAccounts).toEqual([...ids, lastId, lastId]);
+    expect(second.summary).toMatchObject({ success: 3, failed: 1, uncertain: 0 });
+    expect(second.results.slice(0, 3).every((row) => row.replayed === true)).toBe(true);
+    expect(second.results[3]).toMatchObject({ status: "failed", reason: "STORE_ITEM_UNAVAILABLE" });
+    expect(second.results[3]!.replayed).toBeUndefined();
+    expect(productReads.get(lastId)).toBe(3);
+    expect(attempts.filter(({ id }) => id === lastId).map(({ sku }) => sku)).toEqual([
+      "own-sku-0004-revision-1", "own-sku-0004-revision-2", "own-sku-0004-revision-3",
+    ]);
+    for (const [index, id] of ids.slice(0, 3).entries()) {
+      expect(productReads.get(id)).toBe(1);
+      expect(store.values.get(ledgerKey(id))).toBe(successfulRecords[index]);
+    }
+  });
+
   it("caps a batch at four rate-limited attempts and preserves the cooldown for a later manual click", async () => {
     const store = new MemoryClaimStore();
     const locks = vi.spyOn(store, "setNx");
@@ -1018,7 +1172,9 @@ function createClaimFetch({
   targetName?: string;
   targetOverride?: Record<string, unknown>;
   additionalProducts?: Record<string, unknown>[];
-  onPurchase?: (id: string, attempt: number) => Response | Promise<Response>;
+  onPurchase?: (id: string, attempt: number, body: {
+    gameAccountId: string; itemSku?: string; offerId?: string; quantity?: number;
+  }) => Response | Promise<Response>;
   onProductRead?: (id: string, readCount: number) => Record<string, unknown>;
   postPurchaseOverride?: Record<string, unknown>;
 } = {}) {
@@ -1047,12 +1203,12 @@ function createClaimFetch({
     }
 
     const body = JSON.parse(String(init?.body)) as {
-      gameAccountId: string;
+      gameAccountId: string; itemSku?: string; offerId?: string; quantity?: number;
     };
     if (url.endsWith("/api/xsollastore/startpurchase")) {
       purchaseAccounts.push(body.gameAccountId);
       const response = onPurchase
-        ? await onPurchase(body.gameAccountId, purchaseAccounts.filter((id) => id === body.gameAccountId).length)
+        ? await onPurchase(body.gameAccountId, purchaseAccounts.filter((id) => id === body.gameAccountId).length, body)
         : Response.json({ orderAccessToken: "free" });
       const payload = await response.clone().json().catch(() => null);
       if (response.ok && payload?.orderAccessToken === "free" && payload?.success !== false) completedAccounts.add(body.gameAccountId);

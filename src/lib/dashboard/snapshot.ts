@@ -7,6 +7,7 @@ import {
   getLinkedAccounts,
   getProductsForAccount,
   listGameAccountIds,
+  type AccountDirectorySource,
   type DomiNationsAccount,
   type StoreProduct,
 } from "@/lib/dominations/client";
@@ -54,6 +55,27 @@ export interface DashboardAccount {
   age: number | null;
   trophies: number | null;
   catalog: ProductCatalogSummary;
+  diagnostics?: {
+    directorySource: AccountDirectorySource | null;
+    profileNamePresent: boolean | null;
+    profileFieldsPresent: boolean | null;
+    profileErrorShape: boolean | null;
+    exactTargetCandidateCount: number;
+    distinctSkuOfferCandidateCount: number;
+    selected: {
+      stockAvailable: number | null;
+      stockMax: number | null;
+      refreshSeconds: number | null;
+      disabled: boolean;
+      locked: boolean;
+      noInventory: boolean;
+      isFree: boolean;
+      sectionVerified: boolean;
+      skuPresent: boolean;
+      offerIdPresent: boolean;
+      stockGuardConflict: boolean;
+    } | null;
+  };
   product: {
     state: ProductState;
     sectionVerified: boolean;
@@ -93,10 +115,14 @@ export async function loadAccountDirectory(
   // account may be returned by only one of them; their sets need not be equal.
   const linkedById = new Map(accounts.map((account) => [account.gameAccountId, account]));
   const allIds = [...new Set([...gameIds, ...linkedIds])];
-  return Promise.all(allIds.map((gameAccountId) =>
-    linkedById.get(gameAccountId) ??
-    getGameAccountInfo(credentials, gameAccountId, fetchImplementation),
-  ));
+  return Promise.all(allIds.map(async (gameAccountId) => {
+    const account = linkedById.get(gameAccountId) ??
+      await getGameAccountInfo(credentials, gameAccountId, fetchImplementation);
+    const directorySource: AccountDirectorySource = listedIds.has(gameAccountId)
+      ? linkedIds.has(gameAccountId) ? "both" : "listed_only"
+      : "linked_only";
+    return { ...account, diagnostics: { ...account.diagnostics, directorySource } };
+  }));
 }
 
 export async function loadDashboardSnapshot(
@@ -115,6 +141,11 @@ export async function loadDashboardSnapshot(
   );
   const publicAccounts = accounts.map((account, index) => {
     const result = createDashboardAccount(account, productsByAccount[index] ?? []);
+    try {
+      console.info("Store account diagnostics", { accountIndex: index + 1, ...result.diagnostics });
+    } catch {
+      // Diagnostic output is best-effort and must not interrupt account reads.
+    }
     if (result.product.state === "missing") {
       // Aggregate counts only: do not log credentials, account identifiers,
       // upstream strings, product names, SKUs, or offer identifiers.
@@ -162,6 +193,39 @@ export function findTargetProduct(products: StoreProduct[]): StoreProduct | null
 
 function isTargetProductName(name: string): boolean {
   return TARGET_PRODUCT_NAMES.has(name.trim().toLowerCase());
+}
+
+export function getAccountStoreDiagnostics(
+  account: DomiNationsAccount,
+  products: StoreProduct[],
+): NonNullable<DashboardAccount["diagnostics"]> {
+  const candidates = products.filter((product) => isTargetProductName(product.name));
+  const selected = findTargetProduct(products);
+  const selectedState = getProductState(selected);
+  // Return fixed flags/counts only. Account IDs, SKU/offer values, names, and
+  // upstream error text must never enter this object or its diagnostic logs.
+  return {
+    directorySource: account.diagnostics?.directorySource ?? null,
+    profileNamePresent: account.diagnostics?.profileNamePresent ?? null,
+    profileFieldsPresent: account.diagnostics?.profileFieldsPresent ?? null,
+    profileErrorShape: account.diagnostics?.profileErrorShape ?? null,
+    exactTargetCandidateCount: candidates.length,
+    distinctSkuOfferCandidateCount: new Set(candidates.map((product) => JSON.stringify([product.sku, product.offerId]))).size,
+    selected: selected ? {
+      stockAvailable: selected.stockAvailable,
+      stockMax: selected.stockMax,
+      refreshSeconds: selected.refreshSeconds,
+      disabled: selected.disabled,
+      locked: selected.locked,
+      noInventory: selected.noInventory,
+      isFree: selectedState.isFree,
+      sectionVerified: selectedState.sectionVerified,
+      skuPresent: Boolean(selected.sku),
+      offerIdPresent: Boolean(selected.offerId),
+      stockGuardConflict: selectedState.state === "available" &&
+        selected.stockAvailable !== null && selected.stockAvailable <= 0,
+    } : null,
+  };
 }
 
 export function summarizeProductCatalog(products: StoreProduct[]): ProductCatalogSummary {
@@ -251,6 +315,7 @@ function createDashboardAccount(
     age: account.age,
     trophies: account.trophies,
     catalog: summarizeProductCatalog(products),
+    diagnostics: getAccountStoreDiagnostics(account, products),
     product: getProductState(findTargetProduct(products)),
   };
 }
