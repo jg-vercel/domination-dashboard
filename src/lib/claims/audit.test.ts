@@ -83,6 +83,16 @@ describe("claim audit", () => {
     ]);
     expect(parseAuditEntry("not-json")).toBeNull();
   });
+
+  it.each(["STORE_PURCHASE_REJECTED", "STORE_PURCHASE_LIMIT", "STORE_ITEM_UNAVAILABLE", "PREVIOUS_OUTCOME_UNKNOWN"])("preserves safe new reason %s and the replay flag", (reason) => {
+    const payload = {
+      version: 1, cycleId: "2026-08-28", executedAt: "2026-08-28T00:01:00.000Z", summary,
+      results: [{ ...safeResult, reason, replayed: true, rawResponse: "private response" }],
+    };
+    const parsed = parseAuditEntry(JSON.stringify(payload));
+    expect(parsed?.results).toEqual([{ ...safeResult, reason, replayed: true }]);
+    expect(JSON.stringify(parsed)).not.toContain("private response");
+  });
 });
 
 function createAuditStore(values: string[] = []): ClaimStore {

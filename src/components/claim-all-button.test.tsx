@@ -116,4 +116,68 @@ describe("ClaimAllButton", () => {
       ),
     ).toHaveAttribute("role", "alert");
   });
+
+  it("shows mixed HTTP 200 outcomes, safe reasons, and replayed records without automatically retrying", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true,
+      results: [
+        { accountName: "One", maskedAccountId: "••••0001", status: "success", reason: "CONFIRMED", replayed: true },
+        { accountName: "Two", maskedAccountId: "••••0002", status: "failed", reason: "STORE_PURCHASE_REJECTED" },
+        { accountName: "Three", maskedAccountId: "••••0003", status: "uncertain", reason: "PREVIOUS_OUTCOME_UNKNOWN", replayed: true },
+      ],
+    }));
+    const confirmMock = vi.fn(() => true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirmMock);
+    render(<ClaimAllButton enabled accountCount={3} csrfToken="csrf" disabledReason="ready" />);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(await screen.findByText("Cycle 2026-08-28 처리 결과")).toBeInTheDocument();
+    expect(screen.getByText("수령 성공")).toBeInTheDocument();
+    expect(screen.getByText("실패")).toBeInTheDocument();
+    expect(screen.getByText("직접 확인 필요")).toBeInTheDocument();
+    expect(screen.getAllByText("이전 기록 · 재전송하지 않음")).toHaveLength(2);
+    expect(screen.getByText("상점이 수령 요청을 거절했습니다. 버튼을 눌러 다시 시도할 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByText("이전 기록만으로 수령 결과를 확인할 수 없어 재전송하지 않았습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("중복 차단")).not.toBeInTheDocument();
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(confirmMock).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "실패·미수령 계정 다시 확인" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(confirmMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { reason: undefined }, { reason: 123 }, { reason: "CONFIRMED", replayed: "true" },
+  ])("rejects malformed result fields without reporting completion: %j", async (override) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true,
+      results: [{ accountName: "One", maskedAccountId: "••••0001", status: "success", ...override }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ClaimAllButton enabled accountCount={1} csrfToken="csrf" disabledReason="ready" />);
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("수령을 확정하지 못했습니다");
+    expect(screen.queryByText("수령 성공")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send a purchase when confirmation is cancelled", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => false));
+    render(<ClaimAllButton enabled accountCount={1} csrfToken="csrf" disabledReason="ready" />);
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

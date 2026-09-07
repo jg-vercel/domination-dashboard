@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { AuthError } from "@/lib/auth/errors";
 import type { DomiNationsCredential } from "@/lib/auth/session";
 import { getProductState } from "@/lib/dashboard/snapshot";
 
@@ -10,6 +11,7 @@ import {
   getProductsForAccount,
   listGameAccountIds,
   startFreePurchase,
+  type StoreProduct,
 } from "./client";
 
 const credentials: DomiNationsCredential = {
@@ -18,6 +20,149 @@ const credentials: DomiNationsCredential = {
   userId: "user-1",
   xsollaId: "xsolla-1",
 };
+
+const freePurchaseProduct: StoreProduct = {
+  name: "Free Legendary Token!",
+  sku: "free-token-sku",
+  offerId: "",
+  price: 0,
+  currency: "USD",
+  isFree: true,
+  stockAvailable: 1,
+  stockMax: 1,
+  noInventory: false,
+  disabled: false,
+  locked: false,
+  refreshSeconds: 0,
+  validUntil: null,
+  tags: ["AdditionalSpecials"],
+};
+
+describe("DomiNations free purchase outcomes", () => {
+  it.each([
+    "SoldOut", "SoldOutWithRefresh", "InvalidItem", "UnknownItem",
+    "ItemNotAvailable", "NoGiftsRemaining", "NotEnoughVirtualCurrency",
+    "UnableToProcess", "OperationFailed",
+  ])("preserves only the allowlisted explicit rejection %s", async (failreason) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: false, failreason }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "PURCHASE_REJECTED",
+      diagnostic: { stage: "free_purchase", status: 200, reason: "purchase_rejected", purchaseFailure: failreason },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, null, ""])("recognizes an explicit rejection with an absent token (%j)", async (orderAccessToken) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: false, failreason: "SoldOut", orderAccessToken }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "PURCHASE_REJECTED",
+      diagnostic: { purchaseFailure: "SoldOut" },
+    });
+  });
+
+  it.each(["private-upstream-value", { token: "private-upstream-value" }, undefined, null, 1])("redacts unknown rejection details (%j)", async (failreason) => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      success: false,
+      failreason,
+      message: "private-upstream-message",
+      credentials: "private-credentials",
+    }));
+    const error = await startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error).toMatchObject({ code: "PURCHASE_REJECTED", diagnostic: { purchaseFailure: "Other" } });
+    if (!(error instanceof AuthError)) throw new Error("Expected a purchase error");
+    expect(error.cause).toBeUndefined();
+    const diagnostic = `${String(error)} ${JSON.stringify(error)} ${JSON.stringify(warning.mock.calls)}`;
+    expect(diagnostic).not.toContain("private-");
+    expect(warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {},
+    { success: true },
+    { orderAccessToken: null },
+    { orderAccessToken: "" },
+    { orderAccessToken: "  " },
+    { orderAccessToken: 1 },
+    { orderAccessToken: {} },
+    { success: "false", orderAccessToken: "free" },
+    { success: 0, orderAccessToken: "free" },
+    { success: null, orderAccessToken: "free" },
+    { success: false, orderAccessToken: "free", failreason: "SoldOut" },
+    { success: false, orderAccessToken: "private-paid-token", failreason: "SoldOut" },
+    { success: false, orderAccessToken: " " },
+    { success: false, orderAccessToken: 0 },
+    { success: false, orderAccessToken: {} },
+    null,
+    [],
+    "private-upstream-value",
+  ])("keeps malformed or contradictory outcomes uncertain (%j)", async (payload) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(payload));
+    const error = await startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock).catch((error: unknown) => error);
+
+    expect(error).toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      diagnostic: { stage: "free_purchase", status: 200, reason: "response_shape" },
+    });
+    expect(JSON.stringify(error)).not.toContain("private-");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps invalid JSON uncertain without retaining response content", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response("private-invalid-json"));
+    const error = await startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock).catch((error: unknown) => error);
+
+    expect(error).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", diagnostic: { reason: "response_shape" } });
+    if (!(error instanceof AuthError)) throw new Error("Expected a purchase error");
+    expect(error.cause).toBeUndefined();
+    expect(JSON.stringify(error)).not.toContain("private-invalid-json");
+  });
+
+  it.each([429, 500, 503])("keeps HTTP %i uncertain and never retries", async (status) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: false, failreason: "SoldOut" }, { status }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      diagnostic: { stage: "free_purchase", status, reason: "http" },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat an asynchronous response as a confirmed rejection", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: false, failreason: "SoldOut" }, { status: 202 }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE", diagnostic: { status: 202, reason: "response_shape" },
+    });
+  });
+
+  it("keeps network failure uncertain and never retries", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error("network unavailable"));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE", diagnostic: { stage: "free_purchase", reason: "network" },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, true])("accepts the free result with success=%j", async (success) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success, orderAccessToken: "free" }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).resolves.toBe("free");
+  });
+
+  it("distinguishes a real paid token without exposing its value", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: true, orderAccessToken: "private-paid-token" }));
+    const error = await startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock).catch((error: unknown) => error);
+
+    expect(error).toMatchObject({ code: "PAID_CHECKOUT_REJECTED", diagnostic: { stage: "free_purchase", status: 200 } });
+    expect(JSON.stringify(error)).not.toContain("private-paid-token");
+  });
+});
 
 describe("DomiNations authentication adapter", () => {
   it("exchanges Google -> Xsolla -> DomiNations while carrying the cookie jar", async () => {

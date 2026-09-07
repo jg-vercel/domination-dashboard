@@ -39,6 +39,10 @@ const validReasons: AccountClaimResult["reason"][] = [
   "ITEM_NOT_VERIFIED",
   "ITEM_NOT_AVAILABLE",
   "PAID_TOKEN_REJECTED",
+  "STORE_PURCHASE_REJECTED",
+  "STORE_PURCHASE_LIMIT",
+  "STORE_ITEM_UNAVAILABLE",
+  "PREVIOUS_OUTCOME_UNKNOWN",
   "UPSTREAM_BEFORE_PURCHASE",
   "POST_PURCHASE_UNCONFIRMED",
 ];
@@ -125,6 +129,7 @@ function parseAuditResult(value: unknown): AccountClaimResult | null {
     maskedAccountId: value.maskedAccountId,
     status: value.status as ClaimResultStatus,
     reason: value.reason as AccountClaimResult["reason"],
+    ...(value.replayed === true ? { replayed: true as const } : {}),
   };
 }
 

@@ -33,6 +33,7 @@ export interface AccountClaimResult {
   accountName: string;
   maskedAccountId: string;
   status: ClaimResultStatus;
+  replayed?: true;
   reason:
     | "CONFIRMED"
     | "ALREADY_CLAIMED"
@@ -42,6 +43,10 @@ export interface AccountClaimResult {
     | "ITEM_NOT_VERIFIED"
     | "ITEM_NOT_AVAILABLE"
     | "PAID_TOKEN_REJECTED"
+    | "STORE_PURCHASE_REJECTED"
+    | "STORE_PURCHASE_LIMIT"
+    | "STORE_ITEM_UNAVAILABLE"
+    | "PREVIOUS_OUTCOME_UNKNOWN"
     | "UPSTREAM_BEFORE_PURCHASE"
     | "POST_PURCHASE_UNCONFIRMED";
 }
@@ -99,16 +104,23 @@ export async function claimFreeLegendaryTokenForAllAccounts(
     const results: AccountClaimResult[] = [];
 
     for (const account of accounts) {
-      results.push(
-        await claimAccount(
-          session,
-          account,
-          cycle,
-          dependencies.store,
-          fetchImplementation,
-          createOwnerToken,
-        ),
+      const result = await claimAccount(
+        session,
+        account,
+        cycle,
+        dependencies.store,
+        fetchImplementation,
+        createOwnerToken,
       );
+      results.push(result);
+      // Only fixed, public outcome codes: never identifiers, credentials or
+      // upstream response bodies. This also survives a later batch timeout.
+      console.info("Free token claim result", {
+        accountIndex: results.length,
+        status: result.status,
+        reason: result.reason,
+        replayed: result.replayed === true,
+      });
     }
 
     const summary = summarize(results);
@@ -149,11 +161,7 @@ async function claimAccount(
   const previousResult = await store.get(ledgerKey);
 
   if (previousResult !== null) {
-    return {
-      ...publicAccount,
-      status: "duplicate",
-      reason: "PREVIOUS_RESULT",
-    };
+    return { ...publicAccount, ...readPreviousOutcome(previousResult) };
   }
 
   let products: StoreProduct[];
@@ -218,7 +226,14 @@ async function claimAccount(
 
   let purchaseSent = false;
   let durableOutcomeRecorded = false;
+  let definitelyNotPurchased = false;
   try {
+    // A prior owner may have finished while this request fetched the catalog.
+    // Recheck under the account lock before sending anything to the store.
+    const completedWhileWaiting = await store.get(ledgerKey);
+    if (completedWhileWaiting !== null) {
+      return { ...publicAccount, ...readPreviousOutcome(completedWhileWaiting) };
+    }
     purchaseSent = true;
     await startFreePurchase(
       session.dominations,
@@ -236,15 +251,17 @@ async function claimAccount(
       );
       const refreshedTarget = findTargetProduct(refreshedProducts);
       const refreshedState = getProductState(refreshedTarget);
+      const sameOffer =
+        refreshedTarget?.sku === target.sku &&
+        refreshedTarget.offerId === target.offerId;
       const stockDecreased =
         target.stockAvailable !== null &&
         refreshedTarget?.stockAvailable !== null &&
         refreshedTarget?.stockAvailable !== undefined &&
         refreshedTarget.stockAvailable < target.stockAvailable;
-      const confirmed =
-        refreshedState.state === "claimed" ||
-        refreshedState.state === "unavailable" ||
-        stockDecreased;
+      // A disabled/locked listing alone is not evidence of delivery.
+      const confirmed = sameOffer &&
+        (refreshedState.state === "claimed" || stockDecreased);
 
       result = confirmed
         ? { ...publicAccount, status: "success", reason: "CONFIRMED" }
@@ -265,6 +282,38 @@ async function claimAccount(
     durableOutcomeRecorded = true;
     return result;
   } catch (error) {
+    if (error instanceof AuthError) {
+      console.warn("Free token purchase response", {
+        code: error.code,
+        status: error.diagnostic?.status,
+        reason: error.diagnostic?.reason,
+        purchaseFailure: error.diagnostic?.purchaseFailure,
+      });
+    }
+    if (error instanceof AuthError && error.code === "PURCHASE_REJECTED") {
+      const failure = error.diagnostic?.purchaseFailure;
+      const limitReached = failure === "SoldOut" || failure === "SoldOutWithRefresh";
+      // A terminal limit still needs a durable record (or the retained lock)
+      // before another request can safely inspect this account again.
+      definitelyNotPurchased = !limitReached;
+      const itemUnavailable = failure === "InvalidItem" || failure === "UnknownItem" || failure === "ItemNotAvailable";
+      const result: AccountClaimResult = {
+        ...publicAccount,
+        status: limitReached ? "ineligible" : "failed",
+        reason: limitReached
+          ? "STORE_PURCHASE_LIMIT"
+          : itemUnavailable
+            ? "STORE_ITEM_UNAVAILABLE"
+            : "STORE_PURCHASE_REJECTED",
+      };
+      // Preserve the store's purchase limit. Other explicit rejections did
+      // not complete a purchase: retain their audit, not a blocking ledger.
+      if (limitReached) {
+        await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+        durableOutcomeRecorded = true;
+      }
+      return result;
+    }
     const paidTokenRejected =
       error instanceof AuthError && error.code === "PAID_CHECKOUT_REJECTED";
     const result: AccountClaimResult = paidTokenRejected
@@ -285,10 +334,36 @@ async function claimAccount(
     durableOutcomeRecorded = true;
     return result;
   } finally {
-    if (!purchaseSent || durableOutcomeRecorded) {
+    if (!purchaseSent || definitelyNotPurchased || durableOutcomeRecorded) {
       await store.compareDelete(accountLockKey, accountOwner).catch(() => false);
     }
   }
+}
+
+function readPreviousOutcome(value: string): Pick<AccountClaimResult, "status" | "reason" | "replayed"> {
+  try {
+    const payload: unknown = JSON.parse(value);
+    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+      const { status, reason } = payload as Record<string, unknown>;
+      // Old paid-token records also include malformed/denied responses from
+      // the old adapter. They cannot be safely reclassified as retryable.
+      const recognized =
+        (status === "success" && reason === "CONFIRMED") ||
+        (status === "already_claimed" && reason === "ALREADY_CLAIMED") ||
+        (status === "uncertain" && reason === "POST_PURCHASE_UNCONFIRMED") ||
+        (status === "ineligible" && (reason === "PAID_TOKEN_REJECTED" || reason === "STORE_PURCHASE_LIMIT"));
+      if (recognized) {
+        return {
+          status: status as ClaimResultStatus,
+          reason: reason as AccountClaimResult["reason"],
+          replayed: true,
+        };
+      }
+    }
+  } catch {
+    // An unreadable record is not proof that no purchase happened.
+  }
+  return { status: "uncertain", reason: "PREVIOUS_OUTCOME_UNKNOWN", replayed: true };
 }
 
 function requireDomiNationsSession(

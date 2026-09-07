@@ -288,12 +288,66 @@ export async function startFreePurchase(
     },
     fetchImplementation,
   );
-  const payload = await readObject(response);
+  let payload: Record<string, unknown>;
+  try {
+    payload = await readObject(response);
+  } catch {
+    throw purchaseResponseShapeError(response.status);
+  }
 
-  if (payload.orderAccessToken !== "free") {
-    throw new AuthError("PAID_CHECKOUT_REJECTED");
+  if (Object.hasOwn(payload, "success") && typeof payload.success !== "boolean") {
+    throw purchaseResponseShapeError(response.status);
+  }
+
+  const orderToken = payload.orderAccessToken;
+  if (payload.success === false) {
+    if (
+      response.status === 200 &&
+      (orderToken === undefined || orderToken === null || orderToken === "")
+    ) {
+      throw new AuthError("PURCHASE_REJECTED", {
+        diagnostic: {
+          stage: "free_purchase",
+          status: response.status,
+          reason: "purchase_rejected",
+          purchaseFailure: classifyPurchaseFailure(payload.failreason),
+        },
+      });
+    }
+    throw purchaseResponseShapeError(response.status);
+  }
+
+  if (typeof orderToken !== "string" || !orderToken.trim()) {
+    throw purchaseResponseShapeError(response.status);
+  }
+  if (orderToken !== "free") {
+    throw new AuthError("PAID_CHECKOUT_REJECTED", {
+      diagnostic: { stage: "free_purchase", status: response.status },
+    });
   }
   return "free";
+}
+
+const PURCHASE_FAILURE_REASONS = [
+  "SoldOut",
+  "SoldOutWithRefresh",
+  "InvalidItem",
+  "UnknownItem",
+  "ItemNotAvailable",
+  "NoGiftsRemaining",
+  "NotEnoughVirtualCurrency",
+  "UnableToProcess",
+  "OperationFailed",
+] as const;
+
+function classifyPurchaseFailure(value: unknown): NonNullable<AuthDiagnostic["purchaseFailure"]> {
+  return PURCHASE_FAILURE_REASONS.find((reason) => reason === value) ?? "Other";
+}
+
+function purchaseResponseShapeError(status: number): AuthError {
+  return new AuthError("UPSTREAM_UNAVAILABLE", {
+    diagnostic: { stage: "free_purchase", status, reason: "response_shape" },
+  });
 }
 
 async function exchangeXsollaToken(

@@ -15,6 +15,7 @@ export type AuthErrorCode =
   | "SESSION_EXPIRED"
   | "SESSION_TOO_LARGE"
   | "PURCHASE_NOT_ELIGIBLE"
+  | "PURCHASE_REJECTED"
   | "PAID_CHECKOUT_REJECTED"
   | "UPSTREAM_UNAVAILABLE";
 
@@ -30,7 +31,18 @@ export interface AuthDiagnostic {
     | "store_products"
     | "free_purchase";
   status?: number;
-  reason?: "network" | "http" | "response_shape";
+  reason?: "network" | "http" | "response_shape" | "purchase_rejected";
+  purchaseFailure?:
+    | "SoldOut"
+    | "SoldOutWithRefresh"
+    | "InvalidItem"
+    | "UnknownItem"
+    | "ItemNotAvailable"
+    | "NoGiftsRemaining"
+    | "NotEnoughVirtualCurrency"
+    | "UnableToProcess"
+    | "OperationFailed"
+    | "Other";
 }
 
 export class AuthError extends Error {

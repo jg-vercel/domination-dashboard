@@ -3,6 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import {
+  CLAIM_RETRY_GUIDANCE,
+  REPLAYED_CLAIM_LABEL,
+  claimReasonLabel,
+  claimStatusLabel,
+} from "@/lib/claims/presentation";
+
 type ClaimStatus =
   | "success"
   | "already_claimed"
@@ -16,6 +23,7 @@ interface ClaimResult {
   maskedAccountId: string;
   status: ClaimStatus;
   reason: string;
+  replayed?: true;
 }
 
 interface ClaimResponse {
@@ -37,7 +45,7 @@ const claimStatuses: ClaimStatus[] = [
 type ButtonState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "success"; response: ClaimResponse }
+  | { status: "complete"; response: ClaimResponse }
   | { status: "error"; message: string };
 
 export function ClaimAllButton({
@@ -87,7 +95,7 @@ export function ClaimAllButton({
         throw new Error("claim failed");
       }
 
-      setState({ status: "success", response: payload });
+      setState({ status: "complete", response: payload });
       router.refresh();
     } catch {
       setState({
@@ -108,7 +116,7 @@ export function ClaimAllButton({
       >
         {state.status === "loading"
           ? `${accountCount}개 계정 순차 확인 중…`
-          : state.status === "success"
+          : state.status === "complete"
             ? "실패·미수령 계정 다시 확인"
             : buttonLabel}
         {enabled && state.status !== "loading" ? <span aria-hidden="true">→</span> : null}
@@ -118,17 +126,22 @@ export function ClaimAllButton({
       {state.status === "error" && (
         <p className="claim-error" role="alert">{state.message}</p>
       )}
-      {state.status === "success" && (
+      {state.status === "complete" && (
         <div className="claim-results" role="status">
-          <p>Cycle {state.response.cycle.id} 결과</p>
-          {state.response.results.map((result) => (
-            <div className="claim-result-row" key={result.maskedAccountId}>
-              <span>{result.accountName} · {result.maskedAccountId}</span>
-              <strong className={`claim-${result.status}`}>
-                {statusLabel(result.status)}
-              </strong>
+          <p>Cycle {state.response.cycle.id} 처리 결과</p>
+          {state.response.results.map((result, index) => (
+            <div key={`${result.maskedAccountId}-${index}`}>
+              <div className="claim-result-row">
+                <span>{result.accountName} · {result.maskedAccountId}</span>
+                <strong className={`claim-${result.status}`}>
+                  {claimStatusLabel(result.status)}
+                </strong>
+              </div>
+              <p className="button-hint">{claimReasonLabel(result.reason)}</p>
+              {result.replayed && <p className="audit-warning">{REPLAYED_CLAIM_LABEL}</p>}
             </div>
           ))}
+          <p className="audit-warning">{CLAIM_RETRY_GUIDANCE}</p>
           {!state.response.auditRecorded && (
             <p className="audit-warning">
               결과는 표시됐지만 감사 기록 저장을 확인하지 못했습니다.
@@ -163,18 +176,9 @@ function isClaimResponse(value: unknown): value is ClaimResponse {
         typeof result.accountName === "string" &&
         typeof result.maskedAccountId === "string" &&
         typeof result.status === "string" &&
+        typeof result.reason === "string" &&
+        (result.replayed === undefined || result.replayed === true) &&
         claimStatuses.includes(result.status as ClaimStatus),
     )
   );
-}
-
-function statusLabel(status: ClaimStatus): string {
-  return {
-    success: "수령 성공",
-    already_claimed: "이미 수령",
-    duplicate: "중복 차단",
-    ineligible: "수령 불가",
-    failed: "실패",
-    uncertain: "직접 확인 필요",
-  }[status];
 }

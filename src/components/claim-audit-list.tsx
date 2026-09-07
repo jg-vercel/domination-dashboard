@@ -1,5 +1,6 @@
 import type { ClaimAuditEntry } from "@/lib/claims/audit";
 import type { ClaimResultStatus } from "@/lib/claims/service";
+import { REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "@/lib/claims/presentation";
 
 export function ClaimAuditList({ entries }: { entries: ClaimAuditEntry[] }) {
   return (
@@ -32,16 +33,19 @@ export function ClaimAuditList({ entries }: { entries: ClaimAuditEntry[] }) {
                 {statusOrder.map((status) =>
                   entry.summary[status] > 0 ? (
                     <span className={`audit-${status}`} key={status}>
-                      {statusLabel(status)} {entry.summary[status]}
+                      {claimStatusLabel(status)} {entry.summary[status]}
                     </span>
                   ) : null,
                 )}
               </div>
               <div className="activity-accounts">
-                {entry.results.map((result) => (
-                  <span key={`${result.maskedAccountId}-${result.status}`}>
-                    {result.accountName} · {result.maskedAccountId} · {statusLabel(result.status)}
-                  </span>
+                {entry.results.map((result, resultIndex) => (
+                  <div key={`${result.maskedAccountId}-${resultIndex}`}>
+                    <span>{result.accountName} · {result.maskedAccountId} · {claimStatusLabel(result.status)}</span>
+                    <br />
+                    <span>{claimReasonLabel(result.reason)}</span>
+                    {result.replayed && <><br /><span>{REPLAYED_CLAIM_LABEL}</span></>}
+                  </div>
                 ))}
               </div>
             </article>
@@ -60,17 +64,6 @@ const statusOrder: ClaimResultStatus[] = [
   "failed",
   "uncertain",
 ];
-
-function statusLabel(status: ClaimResultStatus): string {
-  return {
-    success: "성공",
-    already_claimed: "이미 수령",
-    duplicate: "중복 차단",
-    ineligible: "자격 없음",
-    failed: "실패",
-    uncertain: "확인 필요",
-  }[status];
-}
 
 function formatKst(value: string): string {
   return new Intl.DateTimeFormat("ko-KR", {
