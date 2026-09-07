@@ -124,7 +124,7 @@ describe("claim Route Handler safety boundary", () => {
     expect(JSON.stringify(body)).not.toContain("redis-secret-token");
   });
 
-  it("uses one authenticated POST to skip a prior success and recover three legacy accounts once through the real service and Redis adapter", async () => {
+  it("uses one authenticated POST to recover legacy accounts with paced 429 retries through the real service and Redis adapter", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-07T02:00:00.000Z"));
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -145,6 +145,7 @@ describe("claim Route Handler safety boundary", () => {
 
     const redisFetch = createRedisFetch(redisValues);
     const purchaseAccounts: string[] = [];
+    const purchaseTimes: number[] = [];
     const catalogAccounts: string[] = [];
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = new URL(String(input));
@@ -169,13 +170,19 @@ describe("claim Route Handler safety boundary", () => {
       if (url.pathname === "/api/xsollastore/startpurchase") {
         expect(body).toMatchObject({ itemSku: "free-token-sku", offerId: "", quantity: 1 });
         purchaseAccounts.push(body.gameAccountId);
+        purchaseTimes.push(Date.now());
+        if (body.gameAccountId === accountIds[2] && purchaseAccounts.filter((id) => id === accountIds[2]).length === 1) {
+          return new Response("rate limited", { status: 429, headers: { "Retry-After": "12" } });
+        }
         return Response.json({ success: true, orderAccessToken: "free" });
       }
       throw new Error("Unexpected test endpoint");
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const firstResponse = await claimAll(createRequest({ sealedSession: sealed, csrfToken }));
+    const firstPending = claimAll(createRequest({ sealedSession: sealed, csrfToken }));
+    await vi.advanceTimersByTimeAsync(120_000);
+    const firstResponse = await firstPending;
     const firstBody = await firstResponse.json() as BatchClaimResult & { ok: boolean };
 
     expect(firstResponse.status).toBe(200);
@@ -186,9 +193,11 @@ describe("claim Route Handler safety boundary", () => {
     expect(firstBody.results.slice(1)).toEqual(accountIds.slice(1).map(() => expect.objectContaining({
       status: "success", reason: "FREE_PURCHASE_ACCEPTED", recovered: true,
     })));
-    expect(purchaseAccounts).toEqual(accountIds.slice(1));
-    // The official free acknowledgement is sufficient; no extra catalog receipt poll.
-    expect(catalogAccounts).toEqual(accountIds.slice(1));
+    const expectedAttempts = [accountIds[1], accountIds[2], accountIds[2], accountIds[3]];
+    expect(purchaseAccounts).toEqual(expectedAttempts);
+    expect(purchaseTimes.slice(1).map((time, index) => time - purchaseTimes[index]!)).toEqual([5_000, 12_000, 5_000]);
+    // Only a rate-limit retry refreshes the catalog; free acknowledgements do not need a receipt poll.
+    expect(catalogAccounts).toEqual(expectedAttempts);
     expect(redisValues.get(ledgerKeys[0]!)).toBe(previousRecords[0]);
     for (let index = 1; index < ledgerKeys.length; index += 1) {
       expect(JSON.parse(redisValues.get(ledgerKeys[index]!)!)).toMatchObject({
@@ -206,8 +215,8 @@ describe("claim Route Handler safety boundary", () => {
     expect(secondBody.summary.success).toBe(4);
     expect(secondBody.results.every((result) => result.replayed === true)).toBe(true);
     expect(secondBody.results.slice(1).every((result) => result.recovered === true)).toBe(true);
-    expect(purchaseAccounts).toEqual(accountIds.slice(1));
-    expect(catalogAccounts).toEqual(accountIds.slice(1));
+    expect(purchaseAccounts).toEqual(expectedAttempts);
+    expect(catalogAccounts).toEqual(expectedAttempts);
 
     const auditResponse = await getClaimAudits(new NextRequest("http://localhost:3000/api/claims/audit", {
       headers: { Cookie: `domi_session=${sealed}` },

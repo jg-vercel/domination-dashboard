@@ -20,6 +20,8 @@ import type { ClaimStore } from "@/lib/idempotency/redis-rest";
 
 import { getClaimCycle, type ClaimCycle } from "./cycle";
 import { recordClaimAudit } from "./audit";
+import { BATCH_LOCK_TTL_SECONDS, ClaimPacer, ClaimPacingDeferredError, MAX_PURCHASE_ATTEMPTS } from "./pacing";
+import { findVerifiedRateLimitRepairs, isVerifiedIncidentRecord, VERIFIED_RATE_LIMIT_INCIDENT } from "./verified-rate-limit-repair";
 
 export type ClaimResultStatus =
   | "success"
@@ -51,6 +53,8 @@ export interface AccountClaimResult {
     | "FREE_PURCHASE_ACCEPTED"
     | "PURCHASE_RESPONSE_UNCONFIRMED"
     | "LEGACY_RECOVERY_UNAVAILABLE"
+    | "STORE_RATE_LIMITED"
+    | "BATCH_TIME_BUDGET"
     | "UPSTREAM_BEFORE_PURCHASE"
     | "POST_PURCHASE_UNCONFIRMED";
 }
@@ -74,6 +78,8 @@ export interface ClaimServiceDependencies {
   fetchImplementation?: typeof fetch;
   now?: Date;
   createOwnerToken?: () => string;
+  clock?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 type ConnectedAppSession = AppSession & {
@@ -93,7 +99,7 @@ export async function claimFreeLegendaryTokenForAllAccounts(
   const batchLockAcquired = await dependencies.store.setNx(
     batchKey,
     batchOwner,
-    180,
+    BATCH_LOCK_TTL_SECONDS,
   );
 
   if (!batchLockAcquired) {
@@ -101,11 +107,20 @@ export async function claimFreeLegendaryTokenForAllAccounts(
   }
 
   try {
+    const pacer = new ClaimPacer(
+      dependencies.store,
+      `domi:claim:pace:${digest(session.admin.subject)}`,
+      dependencies.clock,
+      dependencies.sleep,
+    );
     const accounts = await loadAccountDirectory(
       session.dominations,
       fetchImplementation,
     );
     const results: AccountClaimResult[] = [];
+    const verifiedRepairs = await findVerifiedRateLimitRepairs(
+      session.admin.subject, cycle.id, accounts, dependencies.store,
+    ).catch(() => new Set<string>());
 
     for (const account of accounts) {
       const result = await claimAccount(
@@ -115,6 +130,8 @@ export async function claimFreeLegendaryTokenForAllAccounts(
         dependencies.store,
         fetchImplementation,
         createOwnerToken,
+        pacer,
+        verifiedRepairs.has(account.gameAccountId),
       );
       results.push(result);
       // Only fixed, public outcome codes: never identifiers, credentials or
@@ -153,6 +170,8 @@ async function claimAccount(
   store: ClaimStore,
   fetchImplementation: typeof fetch,
   createOwnerToken: () => string,
+  pacer: ClaimPacer,
+  verifiedRateLimitRepair: boolean,
 ): Promise<AccountClaimResult> {
   const accountHash = digest(
     `${session.admin.subject}:${account.gameAccountId}:Free Legendary Token`,
@@ -166,7 +185,8 @@ async function claimAccount(
   };
   const previousResult = await store.get(ledgerKey);
 
-  if (previousResult !== null && ledgerAction(previousResult) === "skip") {
+  const canRepair = (value: string) => verifiedRateLimitRepair && isVerifiedIncidentRecord(value);
+  if (previousResult !== null && ledgerAction(previousResult) === "skip" && !canRepair(previousResult)) {
     return { ...publicAccount, ...readPreviousOutcome(previousResult) };
   }
 
@@ -191,7 +211,20 @@ async function claimAccount(
   let purchaseAcknowledged = false;
   try {
     // A prior owner may have finished before we acquired this account lock.
-    const completedWhileWaiting = await store.get(ledgerKey);
+    let completedWhileWaiting = await store.get(ledgerKey);
+    if (completedWhileWaiting !== null && canRepair(completedWhileWaiting)) {
+      const archived = await store.setNx(
+        `domi:claim:rate-repair:${cycle.id}:${accountHash}`,
+        JSON.stringify({ requestId: VERIFIED_RATE_LIMIT_INCIDENT.requestId, httpStatus: 429, previousRecord: completedWhileWaiting }),
+        cycle.ledgerTtlSeconds,
+      );
+      if (!archived) return { ...publicAccount, ...readPreviousOutcome(completedWhileWaiting) };
+      const repaired: AccountClaimResult = { ...publicAccount, status: "failed", reason: "STORE_RATE_LIMITED", recovered: true };
+      await writeLedger(store, ledgerKey, repaired, cycle.ledgerTtlSeconds);
+      completedWhileWaiting = await store.get(ledgerKey);
+      recoveryStarted = true;
+      console.info("Free token verified 429 repair", { reason: "STORE_RATE_LIMITED" });
+    }
     if (completedWhileWaiting !== null && ledgerAction(completedWhileWaiting) === "skip") {
       return { ...publicAccount, ...readPreviousOutcome(completedWhileWaiting) };
     }
@@ -199,6 +232,8 @@ async function claimAccount(
     if (recoverLegacy && await store.get(recoveryKey) !== null) {
       return { ...publicAccount, status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true };
     }
+
+    await pacer.waitForTurn();
 
     let products: StoreProduct[];
     try {
@@ -213,7 +248,7 @@ async function claimAccount(
       }
       return { ...publicAccount, status: "failed", reason: "UPSTREAM_BEFORE_PURCHASE" };
     }
-    const target = findTargetProduct(products);
+    let target = findTargetProduct(products);
     const targetState = getProductState(target);
 
     // Current availability is a condition for the user-authorized, one-time
@@ -235,25 +270,50 @@ async function claimAccount(
     if (targetState.state !== "available") {
       return { ...publicAccount, status: "ineligible", reason: "ITEM_NOT_AVAILABLE" };
     }
-    if (recoverLegacy) {
-      // Preserve the entire original record before replacing its result.
-      // This durable marker also prevents a second recovery after a crash.
-      recoveryStarted = await store.setNx(
-        recoveryKey,
-        JSON.stringify({ version: 2, state: "in_flight", previousRecord: completedWhileWaiting }),
-        cycle.ledgerTtlSeconds,
-      );
-      if (!recoveryStarted) {
-        return { ...publicAccount, status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true };
+    for (let attempt = 0; attempt < MAX_PURCHASE_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        await pacer.waitForTurn();
+        // Availability can change while backing off. Never retry using a
+        // stale paid, locked, exhausted, or otherwise unverified listing.
+        const refreshed = await getProductsForAccount(session.dominations, account.gameAccountId, fetchImplementation);
+        target = findTargetProduct(refreshed);
+        if (!target || getProductState(target).state !== "available") {
+          const result: AccountClaimResult = {
+            ...publicAccount, status: "failed", reason: "STORE_ITEM_UNAVAILABLE",
+            ...(recoveryStarted ? { recovered: true as const } : {}),
+          };
+          await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+          durableOutcomeRecorded = true;
+          return result;
+        }
+      }
+      await pacer.recordAttempt();
+      if (recoverLegacy && attempt === 0) {
+        // Reserve recovery only once pacing/budget checks have succeeded.
+        // Preserve the original evidence before any external purchase.
+        recoveryStarted = await store.setNx(
+          recoveryKey,
+          JSON.stringify({ version: 2, state: "in_flight", previousRecord: completedWhileWaiting }),
+          cycle.ledgerTtlSeconds,
+        );
+        if (!recoveryStarted) {
+          return { ...publicAccount, status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true };
+        }
+      }
+      purchaseSent = true;
+      definitelyNotPurchased = false;
+      try {
+        await startFreePurchase(session.dominations, account.gameAccountId, target, fetchImplementation);
+        break;
+      } catch (error) {
+        if (!(error instanceof AuthError) || error.code !== "PURCHASE_RATE_LIMITED") throw error;
+        const delayMs = Math.max(error.diagnostic?.retryAfterMs ?? 0, 10_000 * 2 ** attempt);
+        console.info("Free token rate limit wait", { attempt: attempt + 1, delayMs });
+        await pacer.defer(delayMs);
+        definitelyNotPurchased = true;
+        if (attempt + 1 === MAX_PURCHASE_ATTEMPTS) throw error;
       }
     }
-    purchaseSent = true;
-    await startFreePurchase(
-      session.dominations,
-      account.gameAccountId,
-      target,
-      fetchImplementation,
-    );
     purchaseAcknowledged = true;
 
     // The official free flow completes on orderAccessToken === "free".
@@ -268,6 +328,14 @@ async function claimAccount(
     durableOutcomeRecorded = true;
     return result;
   } catch (error) {
+    if (error instanceof ClaimPacingDeferredError) {
+      const result: AccountClaimResult = { ...publicAccount, status: "failed", reason: error.reason };
+      if (purchaseSent && definitelyNotPurchased) {
+        await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+        durableOutcomeRecorded = true;
+      }
+      return result;
+    }
     // Storage failures are not store rejections. Preserve existing evidence,
     // and retain the lock if a free acknowledgment could not be persisted.
     if (!purchaseSent || purchaseAcknowledged) throw error;
@@ -277,7 +345,25 @@ async function claimAccount(
         status: error.diagnostic?.status,
         reason: error.diagnostic?.reason,
         purchaseFailure: error.diagnostic?.purchaseFailure,
+        retryAfterMs: error.diagnostic?.retryAfterMs,
       });
+    }
+    if (error instanceof AuthError && error.code === "PURCHASE_RATE_LIMITED") {
+      const result: AccountClaimResult = {
+        ...publicAccount, status: "failed", reason: "STORE_RATE_LIMITED",
+        ...(recoveryStarted ? { recovered: true as const } : {}),
+      };
+      await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+      durableOutcomeRecorded = true;
+      return result;
+    }
+    if (definitelyNotPurchased) {
+      // The last purchase received 429; failure while refreshing the catalog
+      // for a later attempt must not erase that evidence of non-completion.
+      const result: AccountClaimResult = { ...publicAccount, status: "failed", reason: "UPSTREAM_BEFORE_PURCHASE" };
+      await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+      durableOutcomeRecorded = true;
+      return result;
     }
     if (error instanceof AuthError && error.code === "PURCHASE_REJECTED") {
       const failure = error.diagnostic?.purchaseFailure;
@@ -336,7 +422,7 @@ function ledgerAction(value: string): "skip" | "recover" | "retry_rejection" {
       return "recover";
     }
     if (record.version === 2 && record.status === "failed" &&
-      (record.reason === "STORE_PURCHASE_REJECTED" || record.reason === "STORE_ITEM_UNAVAILABLE")) {
+      (record.reason === "STORE_PURCHASE_REJECTED" || record.reason === "STORE_ITEM_UNAVAILABLE" || record.reason === "STORE_RATE_LIMITED" || record.reason === "BATCH_TIME_BUDGET" || record.reason === "UPSTREAM_BEFORE_PURCHASE")) {
       return "retry_rejection";
     }
   } catch {

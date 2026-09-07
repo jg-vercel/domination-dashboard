@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClaimAllButton } from "./claim-all-button";
-import { CLAIM_ACTION_NOTICE } from "@/lib/claims/presentation";
+import { CLAIM_ACTION_NOTICE, CLAIM_WAIT_GUIDANCE } from "@/lib/claims/presentation";
 
 const { refreshMock } = vi.hoisted(() => ({ refreshMock: vi.fn() }));
 
@@ -188,8 +188,10 @@ describe("ClaimAllButton", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(screen.getByRole("button")).toBeDisabled();
     expect(screen.getByText(CLAIM_ACTION_NOTICE)).toBeInTheDocument();
+    expect(screen.getByText(CLAIM_WAIT_GUIDANCE)).toHaveAttribute("role", "status");
     resolveRequest(Response.json({ ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true, results: [] }));
     expect(await screen.findByText("Cycle 2026-08-28 처리 결과")).toBeInTheDocument();
+    expect(screen.queryByText(CLAIM_WAIT_GUIDANCE)).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -215,5 +217,32 @@ describe("ClaimAllButton", () => {
     expect(screen.getByText("이전 기록은 미확인 상태이며, 현재 수령 가능한 상품을 확인하지 못해 요청을 보내지 않았습니다.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("shows rate-limited and time-budget accounts as failures while retaining prior successes", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true,
+      results: [
+        { accountName: "Done", maskedAccountId: "••••0001", status: "success", reason: "FREE_PURCHASE_ACCEPTED", replayed: true },
+        { accountName: "Limited", maskedAccountId: "••••0002", status: "failed", reason: "STORE_RATE_LIMITED" },
+        { accountName: "Pending", maskedAccountId: "••••0003", status: "failed", reason: "BATCH_TIME_BUDGET" },
+      ],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const confirmMock = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmMock);
+    render(<ClaimAllButton enabled accountCount={3} csrfToken="csrf" disabledReason="ready" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" }));
+
+    expect(await screen.findByText("Cycle 2026-08-28 처리 결과")).toBeInTheDocument();
+    expect(screen.getAllByText("수령 성공")).toHaveLength(1);
+    expect(screen.getAllByText("실패")).toHaveLength(2);
+    expect(screen.getByText("상점의 요청 빈도 제한으로 수령 요청을 완료하지 못했습니다. 잠시 기다린 뒤 버튼을 눌러 다시 시도할 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByText("안전한 실행 시간 안에 처리하지 못해 이번 차례의 구매 요청은 보내지 않았습니다. 성공한 결과는 유지되며 버튼을 눌러 다시 시도할 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByText("이전 기록 · 재전송하지 않음")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" })).toBeEnabled();
   });
 });

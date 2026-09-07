@@ -122,13 +122,70 @@ describe("DomiNations free purchase outcomes", () => {
     expect(JSON.stringify(error)).not.toContain("private-invalid-json");
   });
 
-  it.each([429, 500, 503])("keeps HTTP %i uncertain and never retries", async (status) => {
+  it.each([500, 503])("keeps HTTP %i uncertain and never retries", async (status) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: false, failreason: "SoldOut" }, { status }));
 
     await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
       code: "UPSTREAM_UNAVAILABLE",
       diagnostic: { stage: "free_purchase", status, reason: "http" },
     });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { header: "5", expectedMs: 5_000 },
+    { header: "0", expectedMs: 0 },
+    { header: null, expectedMs: undefined },
+    { header: "private-invalid-header", expectedMs: undefined },
+    { header: "9".repeat(400), expectedMs: Number.MAX_SAFE_INTEGER },
+  ])("classifies purchase 429 with Retry-After=$header and never retries internally", async ({ header, expectedMs }) => {
+    const headers = new Headers();
+    if (header !== null) headers.set("Retry-After", header);
+    const response = new Response("private-upstream-body", { status: 429, headers });
+    const readBody = vi.spyOn(response, "json");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const error = await startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock).catch((error: unknown) => error);
+
+    expect(error).toMatchObject({
+      code: "PURCHASE_RATE_LIMITED",
+      diagnostic: { stage: "free_purchase", status: 429, reason: "http" },
+    });
+    if (!(error instanceof AuthError)) throw new Error("Expected a purchase error");
+    expect(error.diagnostic?.retryAfterMs).toBe(expectedMs);
+    expect(error.cause).toBeUndefined();
+    expect(JSON.stringify(error)).not.toContain("private-");
+    expect(readBody).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("carries the remaining HTTP-date delay without exposing the header", async () => {
+    const nowMs = Date.UTC(2026, 8, 7, 2, 0, 0);
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, {
+      status: 429, headers: { "Retry-After": new Date(nowMs + 12_000).toUTCString() },
+    }));
+
+    await expect(startFreePurchase(credentials, "account-1", freePurchaseProduct, fetchMock)).rejects.toMatchObject({
+      code: "PURCHASE_RATE_LIMITED",
+      diagnostic: { retryAfterMs: 12_000 },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not reclassify a catalog 429 as a purchase rejection", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response("private-upstream-body", {
+      status: 429, headers: { "Retry-After": "5" },
+    }));
+
+    const error = await getProductsForAccount(credentials, "account-1", fetchMock).catch((error: unknown) => error);
+
+    expect(error).toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      diagnostic: { stage: "store_products", status: 429, reason: "http" },
+    });
+    if (!(error instanceof AuthError)) throw new Error("Expected a catalog error");
+    expect(error.diagnostic?.retryAfterMs).toBeUndefined();
+    expect(JSON.stringify(error)).not.toContain("private-");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

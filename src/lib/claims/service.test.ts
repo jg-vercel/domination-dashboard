@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppSession } from "@/lib/auth/session";
 import type { ClaimStore } from "@/lib/idempotency/redis-rest";
+import type { ClaimAuditEntry } from "./audit";
 
 import {
   BatchClaimInProgressError,
-  claimFreeLegendaryTokenForAllAccounts,
+  claimFreeLegendaryTokenForAllAccounts as runClaimService,
+  type ClaimServiceDependencies,
 } from "./service";
 
 const accountIds = [
@@ -379,7 +381,7 @@ describe("all-account claim service", () => {
     expect(JSON.stringify(result)).not.toContain("private arbitrary text");
   });
 
-  it.each([429, 500])("does not resend a purchase after HTTP %i with unknown outcome", async (status) => {
+  it.each([500, 502, 503])("does not resend a purchase after HTTP %i with unknown outcome", async (status) => {
     const store = new MemoryClaimStore();
     const { fetchMock, purchaseAccounts } = createClaimFetch({
       allAvailable: true, ids: [accountIds[0]!],
@@ -566,13 +568,17 @@ describe("all-account claim service", () => {
     const store = new MemoryClaimStore();
     const original = legacyUnknownRecord();
     store.values.set(ledgerKey(accountIds[0]!), original);
-    const write = vi.spyOn(store, "set").mockRejectedValueOnce(new Error("ledger write failed"));
+    const originalSet = store.set.bind(store);
+    const write = vi.spyOn(store, "set").mockImplementation(async (key, value) => {
+      if (key.includes(":ledger:")) throw new Error("ledger write failed");
+      return originalSet(key, value);
+    });
     const { fetchMock, purchaseAccounts } = createClaimFetch({ allAvailable: true, ids: [accountIds[0]!] });
     const dependencies = { store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z") };
 
     await expect(claimFreeLegendaryTokenForAllAccounts(session, dependencies)).rejects.toThrow("ledger write failed");
 
-    expect(write).toHaveBeenCalledOnce();
+    expect(write.mock.calls.filter(([key]) => key.includes(":ledger:"))).toHaveLength(1);
     expect(store.values.get(ledgerKey(accountIds[0]!))).toBe(original);
     expect(JSON.parse(store.values.get(recoveryKey(accountIds[0]!))!)).toMatchObject({ previousRecord: original });
     const lock = [...store.values.keys()].find((key) => key.includes(":account:"));
@@ -626,7 +632,280 @@ describe("all-account claim service", () => {
     expect(afterCompletion.results[0]).toMatchObject({ status: "success", replayed: true });
     expect(purchaseAccounts).toEqual([accountIds[0]]);
   });
+
+  it("completes all accounts with five-second spacing and bounded backoff after subsequent 429 responses", async () => {
+    const time = createPacingClock();
+    const attempts: Array<{ id: string; at: number }> = [];
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({
+      allAvailable: true,
+      onPurchase: (id, attempt) => {
+        attempts.push({ id, at: time.clock() });
+        const reject = (id === accountIds[1] && attempt <= 2) || (id === accountIds[2] && attempt === 1);
+        return reject ? new Response("rate limited", { status: 429 }) : Response.json({ orderAccessToken: "free" });
+      },
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(), fetchImplementation: fetchMock,
+      now: new Date("2026-08-28T00:00:00Z"), clock: time.clock, sleep: time.sleep,
+    });
+
+    expect(result.summary.success).toBe(3);
+    expect(purchaseAccounts).toEqual([accountIds[0], accountIds[1], accountIds[1], accountIds[1], accountIds[2], accountIds[2]]);
+    expect(attempts.map(({ at }) => at)).toEqual([0, 5_000, 15_000, 35_000, 40_000, 50_000]);
+    expect(attempts.slice(1).every((attempt, index) => attempt.at - attempts[index]!.at >= 5_000)).toBe(true);
+    expect(productReads.get(accountIds[0]!)).toBe(1);
+    expect(productReads.get(accountIds[1]!)).toBe(3);
+    expect(productReads.get(accountIds[2]!)).toBe(2);
+  });
+
+  it("honors a longer Retry-After before retrying and spaces the next account after success", async () => {
+    const time = createPacingClock();
+    const purchaseTimes: number[] = [];
+    const { fetchMock } = createClaimFetch({
+      allAvailable: true, ids: accountIds.slice(0, 2),
+      onPurchase: (id, attempt) => {
+        purchaseTimes.push(time.clock());
+        return id === accountIds[0] && attempt === 1
+          ? new Response("limited", { status: 429, headers: { "Retry-After": "12" } })
+          : Response.json({ orderAccessToken: "free" });
+      },
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(), fetchImplementation: fetchMock,
+      now: new Date("2026-08-28T00:00:00Z"), clock: time.clock, sleep: time.sleep,
+    });
+
+    expect(result.summary.success).toBe(2);
+    expect(purchaseTimes).toEqual([0, 12_000, 17_000]);
+    expect(time.sleep.mock.calls.map(([ms]) => ms)).toEqual([12_000, 5_000]);
+  });
+
+  it("caps a batch at four rate-limited attempts and preserves the cooldown for a later manual click", async () => {
+    const store = new MemoryClaimStore();
+    const locks = vi.spyOn(store, "setNx");
+    const time = createPacingClock();
+    const purchaseTimes: number[] = [];
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!],
+      onPurchase: (_id, attempt) => {
+        purchaseTimes.push(time.clock());
+        return attempt <= 4 ? new Response("limited", { status: 429 }) : Response.json({ orderAccessToken: "free" });
+      },
+    });
+    const dependencies = { store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"), clock: time.clock, sleep: time.sleep };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(first.results[0]).toMatchObject({ status: "failed", reason: "STORE_RATE_LIMITED" });
+    expect(purchaseAccounts).toHaveLength(4);
+    expect(purchaseTimes).toEqual([0, 10_000, 30_000, 70_000]);
+    expect(JSON.parse(store.values.get(ledgerKey(accountIds[0]!))!)).toMatchObject({ version: 2, status: "failed", reason: "STORE_RATE_LIMITED" });
+    const paceKey = [...store.values.keys()].find((key) => key.includes(":pace:"));
+    expect(store.values.get(paceKey!)).toBe("150000");
+    expect(locks).toHaveBeenCalledWith(expect.stringContaining(":batch:"), expect.any(String), 330);
+
+    const second = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(second.results[0]).toMatchObject({ status: "success", reason: "FREE_PURCHASE_ACCEPTED" });
+    expect(purchaseTimes).toEqual([0, 10_000, 30_000, 70_000, 150_000]);
+    expect(purchaseAccounts).toHaveLength(5);
+  });
+
+  it.each([
+    { price: 9.99, is_free: false }, { locked: 1 }, { disabled: 1 }, { google: "" }, { tags: [] },
+  ])("does not retry a 429 when the refreshed product becomes unsafe: %j", async (changedProduct) => {
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!],
+      onPurchase: () => new Response("limited", { status: 429 }),
+      onProductRead: (_id, count) => count > 1 ? changedProduct : {},
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(), fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"),
+    });
+
+    expect(result.results[0]).toMatchObject({ status: "failed", reason: "STORE_ITEM_UNAVAILABLE" });
+    expect(purchaseAccounts).toEqual([accountIds[0]]);
+    expect(productReads.get(accountIds[0]!)).toBe(2);
+  });
+
+  it("preserves successful accounts and leaves later work unattempted when the batch time budget is exhausted", async () => {
+    const store = new MemoryClaimStore();
+    const time = createPacingClock();
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: accountIds.slice(0, 2),
+      onPurchase: (id) => {
+        if (id === accountIds[0]) time.advance(220_000);
+        return Response.json({ orderAccessToken: "free" });
+      },
+    });
+    const dependencies = { store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"), clock: time.clock, sleep: time.sleep };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(first.results[0]?.status).toBe("success");
+    expect(first.results[1]).toMatchObject({ status: "failed", reason: "BATCH_TIME_BUDGET" });
+    expect(purchaseAccounts).toEqual([accountIds[0]]);
+    expect(store.values.has(ledgerKey(accountIds[1]!))).toBe(false);
+    const second = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+    expect(second.summary.success).toBe(2);
+    expect(second.results[0]?.replayed).toBe(true);
+    expect(purchaseAccounts).toEqual(accountIds.slice(0, 2));
+  });
+
+  it("never shortens Retry-After when its cooldown exceeds the current execution budget", async () => {
+    const store = new MemoryClaimStore();
+    const time = createPacingClock();
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!],
+      onPurchase: (_id, attempt) => attempt === 1
+        ? new Response("limited", { status: 429, headers: { "Retry-After": "300" } })
+        : Response.json({ orderAccessToken: "free" }),
+    });
+    const dependencies = { store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z"), clock: time.clock, sleep: time.sleep };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+    const immediateRetry = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(first.results[0]).toMatchObject({ status: "failed", reason: "STORE_RATE_LIMITED" });
+    expect(immediateRetry.results[0]).toMatchObject({ status: "failed", reason: "STORE_RATE_LIMITED" });
+    expect(purchaseAccounts).toEqual([accountIds[0]]);
+    expect(time.sleep).not.toHaveBeenCalled();
+    time.advance(300_000);
+    const afterCooldown = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+    expect(afterCooldown.results[0]?.status).toBe("success");
+    expect(purchaseAccounts).toEqual([accountIds[0], accountIds[0]]);
+  });
+
+  it("repairs only the two verified incident 429 records, preserving successes and original evidence", async () => {
+    const fixture = createVerifiedIncidentFixture();
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({ allAvailable: true, ids: fixture.ids });
+    const dependencies = { store: fixture.store, fetchImplementation: fetchMock, now: new Date("2026-09-07T03:00:00Z") };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(first.summary.success).toBe(4);
+    expect(first.results.slice(0, 2).every((result) => result.status === "success" && result.replayed)).toBe(true);
+    expect(purchaseAccounts).toEqual(fixture.ids.slice(2));
+    for (const index of [0, 1]) {
+      expect(fixture.store.values.get(fixture.ledgerKeys[index]!)).toBe(fixture.originals[index]);
+      expect(productReads.has(fixture.ids[index]!)).toBe(false);
+    }
+    for (const index of [2, 3]) {
+      const ledger = fixture.ledgerKeys[index]!;
+      expect(JSON.parse(fixture.store.values.get(ledger)!)).toMatchObject({ version: 2, status: "success", reason: "FREE_PURCHASE_ACCEPTED" });
+      expect(JSON.parse(fixture.store.values.get(ledger.replace(":ledger:", ":rate-repair:"))!)).toMatchObject({
+        httpStatus: 429, previousRecord: fixture.originals[index],
+      });
+      expect(fixture.store.values.get(ledger.replace(":ledger:", ":recovery:"))).toBe(fixture.oldRecoveryMarker);
+      expect(productReads.get(fixture.ids[index]!)).toBe(1);
+    }
+
+    const second = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(second.results.every((result) => result.status === "success" && result.replayed)).toBe(true);
+    expect(purchaseAccounts).toEqual(fixture.ids.slice(2));
+    expect([...fixture.store.values.keys()].filter((key) => key.includes(":rate-repair:"))).toHaveLength(2);
+    expect(JSON.stringify(first)).not.toContain("previousRecord");
+  });
+
+  it.each(["audit_mismatch", "record_outside_window", "different_batch", "wrong_subject"] as const)("never repairs version-two unknowns without matching incident evidence: %s", async (scenario) => {
+    const fixture = createVerifiedIncidentFixture({
+      ledgerTime: scenario === "record_outside_window" ? "2026-09-07T02:05:57.446Z" : undefined,
+    });
+    if (scenario === "audit_mismatch") fixture.audit.results[2]!.accountName = "Unmatched commander";
+    if (scenario === "different_batch") fixture.audit.results[1]!.replayed = true;
+    fixture.store.lists.set(fixture.auditKey, [JSON.stringify(fixture.audit)]);
+    if (scenario === "wrong_subject") {
+      fixture.store.lists.set("domi:claim:audit:another-subject", fixture.store.lists.get(fixture.auditKey)!);
+      fixture.store.lists.delete(fixture.auditKey);
+    }
+    const { fetchMock, purchaseAccounts, productReads } = createClaimFetch({ allAvailable: true, ids: fixture.ids });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: fixture.store, fetchImplementation: fetchMock, now: new Date("2026-09-07T03:00:00Z"),
+    });
+
+    expect(result.results.slice(2)).toEqual([0, 1].map(() => expect.objectContaining({
+      status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true,
+    })));
+    expect(purchaseAccounts).toEqual([]);
+    expect(productReads.size).toBe(0);
+    fixture.ledgerKeys.forEach((key, index) => expect(fixture.store.values.get(key)).toBe(fixture.originals[index]));
+    expect([...fixture.store.values.keys()].some((key) => key.includes(":rate-repair:"))).toBe(false);
+  });
+
+  it("never sends or changes the incident records when the repair backup cannot be written", async () => {
+    const fixture = createVerifiedIncidentFixture();
+    const originalSetNx = fixture.store.setNx.bind(fixture.store);
+    vi.spyOn(fixture.store, "setNx").mockImplementation(async (key, value) => {
+      if (key.includes(":rate-repair:")) throw new Error("repair backup unavailable");
+      return originalSetNx(key, value);
+    });
+    const { fetchMock, purchaseAccounts } = createClaimFetch({ allAvailable: true, ids: fixture.ids });
+
+    await expect(claimFreeLegendaryTokenForAllAccounts(session, {
+      store: fixture.store, fetchImplementation: fetchMock, now: new Date("2026-09-07T03:00:00Z"),
+    })).rejects.toThrow("repair backup unavailable");
+
+    expect(purchaseAccounts).toEqual([]);
+    fixture.ledgerKeys.forEach((key, index) => expect(fixture.store.values.get(key)).toBe(fixture.originals[index]));
+    expect([...fixture.store.values.keys()].some((key) => key.includes(":rate-repair:") || key.includes(":account:"))).toBe(false);
+  });
+
+  it("does not repeat a verified repair when its backup marker exists but the old unknown ledger remains", async () => {
+    const fixture = createVerifiedIncidentFixture();
+    for (const index of [2, 3]) {
+      fixture.store.values.set(fixture.ledgerKeys[index]!.replace(":ledger:", ":rate-repair:"), "existing-repair-marker");
+    }
+    const { fetchMock, purchaseAccounts } = createClaimFetch({ allAvailable: true, ids: fixture.ids });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: fixture.store, fetchImplementation: fetchMock, now: new Date("2026-09-07T03:00:00Z"),
+    });
+
+    expect(result.results.slice(2).every((item) => item.status === "uncertain" && item.replayed)).toBe(true);
+    expect(purchaseAccounts).toEqual([]);
+    fixture.ledgerKeys.forEach((key, index) => expect(fixture.store.values.get(key)).toBe(fixture.originals[index]));
+  });
+
+  it("retains confirmed rate-limit non-completion when the retry catalog lookup fails and permits a later manual retry", async () => {
+    const store = new MemoryClaimStore();
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true, ids: [accountIds[0]!], failAccountOnePostCheck: true,
+      onPurchase: (_id, attempt) => attempt === 1
+        ? new Response("limited", { status: 429 })
+        : Response.json({ orderAccessToken: "free" }),
+    });
+    const dependencies = { store, fetchImplementation: fetchMock, now: new Date("2026-08-28T00:00:00Z") };
+
+    const first = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+
+    expect(first.results[0]).toMatchObject({ status: "failed", reason: "UPSTREAM_BEFORE_PURCHASE" });
+    expect(JSON.parse(store.values.get(ledgerKey(accountIds[0]!))!)).toMatchObject({ version: 2, status: "failed", reason: "UPSTREAM_BEFORE_PURCHASE" });
+    expect(purchaseAccounts).toEqual([accountIds[0]]);
+    const second = await claimFreeLegendaryTokenForAllAccounts(session, dependencies);
+    expect(second.results[0]).toMatchObject({ status: "success", reason: "FREE_PURCHASE_ACCEPTED" });
+    expect(purchaseAccounts).toEqual([accountIds[0], accountIds[0]]);
+  });
 });
+
+// Exercise real pacing logic without any wall-clock waits in the unit suite.
+function claimFreeLegendaryTokenForAllAccounts(appSession: AppSession, dependencies: ClaimServiceDependencies) {
+  const time = createPacingClock(dependencies.now?.getTime() ?? Date.now());
+  return runClaimService(appSession, { clock: time.clock, sleep: time.sleep, ...dependencies });
+}
+
+function createPacingClock(startMs = 0) {
+  let currentMs = startMs;
+  return {
+    clock: () => currentMs,
+    sleep: vi.fn(async (ms: number) => { currentMs += ms; }),
+    advance: (ms: number) => { currentMs += ms; },
+  };
+}
 
 function ledgerKey(id: string) {
   const hash = createHash("sha256").update(`${session.admin.subject}:${id}:Free Legendary Token`).digest("hex").slice(0, 24);
@@ -639,6 +918,34 @@ function recoveryKey(id: string) {
 
 function legacyUnknownRecord() {
   return JSON.stringify({ status: "uncertain", reason: "POST_PURCHASE_UNCONFIRMED", recordedAt: "2026-08-28T00:01:00Z" });
+}
+
+function createVerifiedIncidentFixture({ ledgerTime = "2026-09-07T02:05:20.000Z" }: { ledgerTime?: string } = {}) {
+  const store = new MemoryClaimStore();
+  const ids = ["game-account-0000", ...accountIds];
+  const ledgerKeys = ids.map((id) => ledgerKey(id).replace("2026-08-28", "2026-09-07"));
+  const originals = ids.map((_, index) => JSON.stringify(index === 0
+    ? { status: "success", reason: "CONFIRMED", recordedAt: "2026-09-07T02:00:00Z" }
+    : { version: 2, status: index === 1 ? "success" : "uncertain", reason: index === 1 ? "FREE_PURCHASE_ACCEPTED" : "PURCHASE_RESPONSE_UNCONFIRMED", recovered: true, recordedAt: ledgerTime }));
+  const oldRecoveryMarker = JSON.stringify({ version: 2, state: "in_flight", previousRecord: legacyUnknownRecord() });
+  ledgerKeys.forEach((key, index) => {
+    store.values.set(key, originals[index]!);
+    if (index > 0) store.values.set(key.replace(":ledger:", ":recovery:"), oldRecoveryMarker);
+  });
+  const audit: ClaimAuditEntry = {
+    version: 1, cycleId: "2026-09-07", executedAt: "2026-09-07T02:05:25.000Z",
+    summary: { success: 2, already_claimed: 0, duplicate: 0, ineligible: 0, failed: 0, uncertain: 2 },
+    results: ids.map((id, index) => ({
+      accountName: `Commander ${index + 1}`, maskedAccountId: `••••${id.slice(-4)}`,
+      status: index < 2 ? "success" : "uncertain",
+      reason: index === 0 ? "CONFIRMED" : index === 1 ? "FREE_PURCHASE_ACCEPTED" : "PURCHASE_RESPONSE_UNCONFIRMED",
+      ...(index === 0 ? { replayed: true as const } : { recovered: true as const }),
+    })),
+  };
+  const subjectHash = createHash("sha256").update(session.admin.subject).digest("hex").slice(0, 24);
+  const auditKey = `domi:claim:audit:${subjectHash}`;
+  store.lists.set(auditKey, [JSON.stringify(audit)]);
+  return { store, ids, ledgerKeys, originals, auditKey, audit, oldRecoveryMarker };
 }
 
 class MemoryClaimStore implements ClaimStore {
@@ -699,6 +1006,7 @@ function createClaimFetch({
   targetOverride = {},
   additionalProducts = [],
   onPurchase,
+  onProductRead,
   postPurchaseOverride = {},
 }: {
   failAccountOnePostCheck?: boolean;
@@ -711,6 +1019,7 @@ function createClaimFetch({
   targetOverride?: Record<string, unknown>;
   additionalProducts?: Record<string, unknown>[];
   onPurchase?: (id: string, attempt: number) => Response | Promise<Response>;
+  onProductRead?: (id: string, readCount: number) => Record<string, unknown>;
   postPurchaseOverride?: Record<string, unknown>;
 } = {}) {
   const productReads = new Map<string, number>();
@@ -781,6 +1090,7 @@ function createClaimFetch({
       tags: !allAvailable && index === 2 ? [] : ["AdditionalSpecials"],
       ...targetOverride,
       ...(confirmedAfterPurchase ? postPurchaseOverride : {}),
+      ...onProductRead?.(body.gameAccountId, readCount),
     };
     return Response.json(JSON.stringify([...additionalProducts, product]));
   });

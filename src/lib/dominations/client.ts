@@ -4,6 +4,7 @@ import { createPkcePair, createRandomToken } from "@/lib/auth/crypto";
 import { AuthError } from "@/lib/auth/errors";
 import type { AuthDiagnostic, AuthErrorCode } from "@/lib/auth/errors";
 import type { DomiNationsCredential } from "@/lib/auth/session";
+import { parseRetryAfterMs } from "./retry-after";
 
 export const DOMINATIONS_API_ORIGIN = "https://api.dominationsworld.com";
 export const XSOLLA_LOGIN_ORIGIN = "https://login.xsolla.com";
@@ -487,6 +488,17 @@ async function dominationsRequest(
   if (response.status === 401) {
     throw new AuthError("SESSION_EXPIRED", {
       diagnostic: { stage: upstreamStage(path), status: response.status, reason: "http" },
+    });
+  }
+  if (response.status === 429 && path === "/api/xsollastore/startpurchase") {
+    const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
+    throw new AuthError("PURCHASE_RATE_LIMITED", {
+      diagnostic: {
+        stage: "free_purchase",
+        status: response.status,
+        reason: "http",
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      },
     });
   }
   if (!response.ok) {

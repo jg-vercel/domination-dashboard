@@ -16,6 +16,7 @@ export type AuthErrorCode =
   | "SESSION_TOO_LARGE"
   | "PURCHASE_NOT_ELIGIBLE"
   | "PURCHASE_REJECTED"
+  | "PURCHASE_RATE_LIMITED"
   | "PAID_CHECKOUT_REJECTED"
   | "UPSTREAM_UNAVAILABLE";
 
@@ -31,6 +32,7 @@ export interface AuthDiagnostic {
     | "store_products"
     | "free_purchase";
   status?: number;
+  retryAfterMs?: number;
   reason?: "network" | "http" | "response_shape" | "purchase_rejected";
   purchaseFailure?:
     | "SoldOut"

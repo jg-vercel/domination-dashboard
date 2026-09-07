@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CLAIM_ACTION_NOTICE, CLAIM_RETRY_GUIDANCE, RECOVERED_CLAIM_LABEL, REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "./presentation";
+import { CLAIM_ACTION_NOTICE, CLAIM_RETRY_GUIDANCE, CLAIM_WAIT_GUIDANCE, RECOVERED_CLAIM_LABEL, REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "./presentation";
 
 describe("claim result presentation", () => {
   it.each([
@@ -16,6 +16,7 @@ describe("claim result presentation", () => {
     "POST_PURCHASE_UNCONFIRMED", "STORE_PURCHASE_REJECTED", "STORE_PURCHASE_LIMIT",
     "STORE_ITEM_UNAVAILABLE", "PREVIOUS_OUTCOME_UNKNOWN",
     "FREE_PURCHASE_ACCEPTED", "PURCHASE_RESPONSE_UNCONFIRMED", "LEGACY_RECOVERY_UNAVAILABLE",
+    "STORE_RATE_LIMITED", "BATCH_TIME_BUDGET",
   ])("provides a Korean explanation for %s", (reason) => {
     expect(claimReasonLabel(reason)).toMatch(/[가-힣]/);
     expect(claimReasonLabel(reason)).not.toBe("수령 결과를 확인해 주세요.");
@@ -39,6 +40,14 @@ describe("claim result presentation", () => {
     expect(claimReasonLabel("FREE_PURCHASE_ACCEPTED")).toContain("게임 반영까지 시간이 걸릴 수");
     expect(claimReasonLabel("PURCHASE_RESPONSE_UNCONFIRMED")).toContain("추가 전송을 보류");
     expect(claimReasonLabel("LEGACY_RECOVERY_UNAVAILABLE")).toContain("요청을 보내지 않았습니다");
+  });
+
+  it("explains rate-limit waiting and unattempted work without promising successful collection", () => {
+    expect(CLAIM_WAIT_GUIDANCE).toBe("상점 요청 제한을 지키며 순차 처리합니다. 대기 중에는 다시 누르지 마세요.");
+    expect(claimReasonLabel("STORE_RATE_LIMITED")).toContain("요청 빈도 제한");
+    expect(claimReasonLabel("STORE_RATE_LIMITED")).toContain("잠시 기다린 뒤 버튼을 눌러 다시 시도");
+    expect(claimReasonLabel("BATCH_TIME_BUDGET")).toContain("이번 차례의 구매 요청은 보내지 않았습니다");
+    expect(claimReasonLabel("BATCH_TIME_BUDGET")).toContain("성공한 결과는 유지");
   });
 
   it("does not call a legacy unverified token a confirmed paid checkout", () => {

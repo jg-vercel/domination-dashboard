@@ -6,6 +6,8 @@ export const CLAIM_ACTION_NOTICE =
   "한 번 누르면 이미 성공한 계정은 제외하고, 기존 결과 미확인 계정은 상점의 최신 상태를 확인한 뒤 필요한 경우 1회 재시도합니다. 수령 가능 여부는 상점 한도를 따릅니다.";
 export const CLAIM_RETRY_GUIDANCE =
   "이번 요청의 결과가 불명확하면 추가 전송을 보류합니다. 이미 성공한 계정은 다시 요청하지 않으며, 수령 여부는 상점 한도를 따릅니다.";
+export const CLAIM_WAIT_GUIDANCE =
+  "상점 요청 제한을 지키며 순차 처리합니다. 대기 중에는 다시 누르지 마세요.";
 
 const statusLabels: Record<ClaimResultStatus, string> = {
   success: "수령 성공",
@@ -34,6 +36,8 @@ const reasonLabels: Readonly<Record<string, string>> = {
   FREE_PURCHASE_ACCEPTED: "상점의 무료 수령 성공 응답을 확인했습니다. 게임 반영까지 시간이 걸릴 수 있습니다.",
   PURCHASE_RESPONSE_UNCONFIRMED: "이번 요청의 결과를 확인하지 못해 추가 전송을 보류했습니다.",
   LEGACY_RECOVERY_UNAVAILABLE: "이전 기록은 미확인 상태이며, 현재 수령 가능한 상품을 확인하지 못해 요청을 보내지 않았습니다.",
+  STORE_RATE_LIMITED: "상점의 요청 빈도 제한으로 수령 요청을 완료하지 못했습니다. 잠시 기다린 뒤 버튼을 눌러 다시 시도할 수 있습니다.",
+  BATCH_TIME_BUDGET: "안전한 실행 시간 안에 처리하지 못해 이번 차례의 구매 요청은 보내지 않았습니다. 성공한 결과는 유지되며 버튼을 눌러 다시 시도할 수 있습니다.",
 };
 
 export function claimStatusLabel(status: ClaimResultStatus): string {

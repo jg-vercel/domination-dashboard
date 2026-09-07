@@ -46,6 +46,8 @@ const validReasons: AccountClaimResult["reason"][] = [
   "FREE_PURCHASE_ACCEPTED",
   "PURCHASE_RESPONSE_UNCONFIRMED",
   "LEGACY_RECOVERY_UNAVAILABLE",
+  "STORE_RATE_LIMITED",
+  "BATCH_TIME_BUDGET",
   "UPSTREAM_BEFORE_PURCHASE",
   "POST_PURCHASE_UNCONFIRMED",
 ];
@@ -122,6 +124,8 @@ function parseAuditResult(value: unknown): AccountClaimResult | null {
     typeof value.accountName !== "string" ||
     typeof value.maskedAccountId !== "string" ||
     !value.maskedAccountId.startsWith("••••") ||
+    (value.replayed !== undefined && typeof value.replayed !== "boolean") ||
+    (value.recovered !== undefined && typeof value.recovered !== "boolean") ||
     !validStatuses.includes(value.status as ClaimResultStatus) ||
     !validReasons.includes(value.reason as AccountClaimResult["reason"])
   ) {

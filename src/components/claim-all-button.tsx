@@ -6,6 +6,7 @@ import { useId, useRef, useState } from "react";
 import {
   CLAIM_ACTION_NOTICE,
   CLAIM_RETRY_GUIDANCE,
+  CLAIM_WAIT_GUIDANCE,
   RECOVERED_CLAIM_LABEL,
   REPLAYED_CLAIM_LABEL,
   claimReasonLabel,
@@ -123,6 +124,7 @@ export function ClaimAllButton({
 
       <p className="button-hint" id={noticeId}>{CLAIM_ACTION_NOTICE}</p>
       {state.status === "idle" && <p className="button-hint">{disabledReason}</p>}
+      {state.status === "loading" && <p className="button-hint" role="status">{CLAIM_WAIT_GUIDANCE}</p>}
       {state.status === "error" && (
         <p className="claim-error" role="alert">{state.message}</p>
       )}
