@@ -85,7 +85,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const authError = authErrorFromRedirect || sessionError;
   const claimEnabled = Boolean(
     session?.dominations &&
-      snapshot?.ready &&
+      snapshot &&
       connectedCount > 0 &&
       redisReadiness.configured,
   );
@@ -95,11 +95,9 @@ export default async function Home({ searchParams }: HomeProps) {
       ? "위의 Domi 연결 버튼으로 게임 계정을 확인해 주세요."
       : connectedCount === 0
         ? "이 계정에 연결된 게임 계정이 없습니다."
-        : !snapshot.ready
-          ? "연결된 계정의 무료 상품 확인이 필요합니다."
-          : !redisReadiness.configured
-            ? "중복 방지용 Upstash Redis 설정이 필요합니다."
-            : `버튼을 누를 때만 연결된 ${connectedCount}개 계정을 순차 처리합니다.`;
+        : !redisReadiness.configured
+          ? "중복 방지용 Upstash Redis 설정이 필요합니다."
+          : `버튼을 누를 때만 연결된 ${connectedCount}개 계정을 순차 처리합니다.`;
 
   return (
     <div className="app-shell">
@@ -151,10 +149,10 @@ export default async function Home({ searchParams }: HomeProps) {
         <section className="hero-card" id="overview">
           <div className="hero-copy">
             <p className="eyebrow light">WEB SPECIALS</p>
-            <h2>Free Legendary Token</h2>
+            <h2>Free Legendary Token!</h2>
             <p>
-              연결된 모든 게임 계정에서 매일 한 번, 사용자 버튼으로 안전하게
-              수령합니다.
+              한 번 누르면 연결 계정의 상태를 확인하고, 수령 가능한 계정에서
+              무료 토큰을 요청합니다. 상점의 수령 한도가 적용됩니다.
             </p>
             <div className="hero-meta">
               <span>FREE</span>
@@ -249,11 +247,7 @@ export default async function Home({ searchParams }: HomeProps) {
               accountCount={connectedCount}
               csrfToken={session?.claimCsrfToken ?? null}
               disabledReason={claimDisabledReason}
-              buttonLabel={
-                auditEntries.length > 0
-                  ? "실패·미수령 계정 다시 확인"
-                  : "모든 계정에서 무료 토큰 수령"
-              }
+              buttonLabel="전체 계정 무료 토큰 수령"
             />
           </section>
 

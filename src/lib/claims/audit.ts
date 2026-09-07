@@ -43,6 +43,9 @@ const validReasons: AccountClaimResult["reason"][] = [
   "STORE_PURCHASE_LIMIT",
   "STORE_ITEM_UNAVAILABLE",
   "PREVIOUS_OUTCOME_UNKNOWN",
+  "FREE_PURCHASE_ACCEPTED",
+  "PURCHASE_RESPONSE_UNCONFIRMED",
+  "LEGACY_RECOVERY_UNAVAILABLE",
   "UPSTREAM_BEFORE_PURCHASE",
   "POST_PURCHASE_UNCONFIRMED",
 ];
@@ -130,6 +133,7 @@ function parseAuditResult(value: unknown): AccountClaimResult | null {
     status: value.status as ClaimResultStatus,
     reason: value.reason as AccountClaimResult["reason"],
     ...(value.replayed === true ? { replayed: true as const } : {}),
+    ...(value.recovered === true ? { recovered: true as const } : {}),
   };
 }
 

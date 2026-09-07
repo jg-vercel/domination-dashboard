@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 
 import { POST as claimAll } from "@/app/api/claims/free-legendary-token/route";
 import { GET as getClaimAudits } from "@/app/api/claims/audit/route";
@@ -11,12 +12,17 @@ import {
   createServerAppSession,
 } from "@/lib/auth/server-session";
 import type { AuthKeyValueStore } from "@/lib/idempotency/redis-rest";
+import type { BatchClaimResult } from "@/lib/claims/service";
+import type { ClaimAuditEntry } from "@/lib/claims/audit";
+import { getClaimCycle } from "@/lib/claims/cycle";
 
 const sessionSecret =
   "integration-claim-session-secret-with-at-least-32-characters";
 
 describe("claim Route Handler safety boundary", () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
@@ -117,6 +123,106 @@ describe("claim Route Handler safety boundary", () => {
     expect(JSON.stringify(body)).not.toContain("dominations-bearer");
     expect(JSON.stringify(body)).not.toContain("redis-secret-token");
   });
+
+  it("uses one authenticated POST to skip a prior success and recover three legacy accounts once through the real service and Redis adapter", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T02:00:00.000Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubAuthEnvironment();
+    const { sealed, csrfToken, redisValues } = await createTestSession();
+    const accountIds = ["game-account-0001", "game-account-0002", "game-account-0003", "game-account-0004"];
+    const cycle = getClaimCycle();
+    const ledgerKeys = accountIds.map((id) => {
+      const hash = createHash("sha256").update(`google-subject:${id}:Free Legendary Token`).digest("hex").slice(0, 24);
+      return `domi:claim:ledger:${cycle.id}:${hash}`;
+    });
+    const previousRecords = accountIds.map((_, index) => JSON.stringify({
+      status: index === 0 ? "success" : "uncertain",
+      reason: index === 0 ? "CONFIRMED" : "POST_PURCHASE_UNCONFIRMED",
+      recordedAt: "2026-09-07T01:00:00.000Z",
+    }));
+    ledgerKeys.forEach((key, index) => redisValues.set(key, previousRecords[index]!));
+
+    const redisFetch = createRedisFetch(redisValues);
+    const purchaseAccounts: string[] = [];
+    const catalogAccounts: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.origin === "https://redis.example") return redisFetch(input, init);
+      if (url.origin !== "https://api.dominationsworld.com") throw new Error("Unexpected test upstream");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer dominations-bearer");
+      expect(new Headers(init?.headers).get("cookie")).toBe("domi=session");
+      if (url.pathname === "/api/gameident/dom/list") {
+        return Response.json({ gameIds: Object.fromEntries(accountIds.map((id) => [id, {}])) });
+      }
+      if (url.pathname === "/api/dominations/linked_user_info") {
+        return Response.json({ accounts: accountIds.map((gameAccountId, index) => ({ gameAccountId, name: `Commander ${index + 1}` })) });
+      }
+      const body = JSON.parse(String(init?.body)) as { gameAccountId: string; itemSku?: string; offerId?: string; quantity?: number };
+      if (url.pathname === "/api/xsollastore/getproducts") {
+        catalogAccounts.push(body.gameAccountId);
+        return Response.json(JSON.stringify([{
+          name: "Free Legendary Token!", google: "free-token-sku", offerId: "", price: 0,
+          is_free: false, stockAvailable: 1, stockMax: 1, tags: ["AdditionalSpecials"],
+        }]));
+      }
+      if (url.pathname === "/api/xsollastore/startpurchase") {
+        expect(body).toMatchObject({ itemSku: "free-token-sku", offerId: "", quantity: 1 });
+        purchaseAccounts.push(body.gameAccountId);
+        return Response.json({ success: true, orderAccessToken: "free" });
+      }
+      throw new Error("Unexpected test endpoint");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const firstResponse = await claimAll(createRequest({ sealedSession: sealed, csrfToken }));
+    const firstBody = await firstResponse.json() as BatchClaimResult & { ok: boolean };
+
+    expect(firstResponse.status).toBe(200);
+    expect(firstResponse.headers.get("cache-control")).toBe("no-store");
+    expect(firstResponse.cookies.get("domi_session")?.value).toBeTruthy();
+    expect(firstBody).toMatchObject({ ok: true, auditRecorded: true, summary: { success: 4, uncertain: 0, failed: 0 } });
+    expect(firstBody.results[0]).toMatchObject({ status: "success", reason: "CONFIRMED", replayed: true });
+    expect(firstBody.results.slice(1)).toEqual(accountIds.slice(1).map(() => expect.objectContaining({
+      status: "success", reason: "FREE_PURCHASE_ACCEPTED", recovered: true,
+    })));
+    expect(purchaseAccounts).toEqual(accountIds.slice(1));
+    // The official free acknowledgement is sufficient; no extra catalog receipt poll.
+    expect(catalogAccounts).toEqual(accountIds.slice(1));
+    expect(redisValues.get(ledgerKeys[0]!)).toBe(previousRecords[0]);
+    for (let index = 1; index < ledgerKeys.length; index += 1) {
+      expect(JSON.parse(redisValues.get(ledgerKeys[index]!)!)).toMatchObject({
+        version: 2, status: "success", reason: "FREE_PURCHASE_ACCEPTED", recovered: true,
+      });
+      const recoveryKey = ledgerKeys[index]!.replace(":ledger:", ":recovery:");
+      expect(JSON.parse(redisValues.get(recoveryKey)!)).toMatchObject({ previousRecord: previousRecords[index] });
+    }
+    expect([...redisValues.keys()].some((key) => key.includes(":account:") || key.includes(":batch:"))).toBe(false);
+
+    const secondResponse = await claimAll(createRequest({ sealedSession: sealed, csrfToken }));
+    const secondBody = await secondResponse.json() as BatchClaimResult & { ok: boolean };
+
+    expect(secondResponse.status).toBe(200);
+    expect(secondBody.summary.success).toBe(4);
+    expect(secondBody.results.every((result) => result.replayed === true)).toBe(true);
+    expect(secondBody.results.slice(1).every((result) => result.recovered === true)).toBe(true);
+    expect(purchaseAccounts).toEqual(accountIds.slice(1));
+    expect(catalogAccounts).toEqual(accountIds.slice(1));
+
+    const auditResponse = await getClaimAudits(new NextRequest("http://localhost:3000/api/claims/audit", {
+      headers: { Cookie: `domi_session=${sealed}` },
+    }));
+    const auditBody = await auditResponse.json() as { ok: boolean; audits: ClaimAuditEntry[] };
+    expect(auditResponse.status).toBe(200);
+    expect(auditBody.ok).toBe(true);
+    expect(auditBody.audits).toHaveLength(2);
+    for (const entry of auditBody.audits) {
+      expect(entry.results.slice(1).every((result) => result.recovered === true && result.reason === "FREE_PURCHASE_ACCEPTED")).toBe(true);
+    }
+    expect(JSON.stringify({ firstBody, secondBody, auditBody })).not.toMatch(/dominations-bearer|google-refresh-token|redis-secret-token/);
+    expect(redisFetch.mock.calls.some(([, init]) => JSON.parse(String(init?.body))[0] === "EVAL")).toBe(true);
+    expect(redisFetch.mock.calls.filter(([input]) => new URL(String(input)).pathname === "/pipeline")).toHaveLength(2);
+  });
 });
 
 function stubAuthEnvironment() {
@@ -179,8 +285,28 @@ function createRedisFetch(
   values: Map<string, string>,
   audits: string[] = [],
 ) {
-  return vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+  const lists = new Map<string, string[]>();
+  return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.origin !== "https://redis.example") throw new Error("Unexpected Redis test origin");
     const command = JSON.parse(String(init?.body)) as unknown[];
+    if (url.pathname === "/pipeline") {
+      const results = (command as unknown[][]).map(([operation, keyValue, value, stop]) => {
+        const key = String(keyValue);
+        if (operation === "LPUSH") {
+          const next = [String(value), ...(lists.get(key) ?? [])];
+          lists.set(key, next);
+          return { result: next.length };
+        }
+        if (operation === "LTRIM") {
+          lists.set(key, (lists.get(key) ?? []).slice(Number(value), Number(stop) + 1));
+          return { result: "OK" };
+        }
+        if (operation === "EXPIRE") return { result: 1 };
+        throw new Error("Unsupported test pipeline command");
+      });
+      return Response.json(results);
+    }
     const operation = command[0];
     const key = String(command[1] ?? "");
 
@@ -188,11 +314,20 @@ function createRedisFetch(
       return Response.json({ result: values.get(key) ?? null });
     }
     if (operation === "SET") {
+      if (command.includes("NX") && values.has(key)) return Response.json({ result: null });
       values.set(key, String(command[2] ?? ""));
       return Response.json({ result: "OK" });
     }
     if (operation === "LRANGE") {
-      return Response.json({ result: audits });
+      const stop = Number(command[3]);
+      return Response.json({ result: (lists.get(key) ?? audits).slice(Number(command[2]), stop < 0 ? undefined : stop + 1) });
+    }
+    if (operation === "EVAL") {
+      const lockKey = String(command[3]);
+      const owner = String(command[4]);
+      if (values.get(lockKey) !== owner) return Response.json({ result: 0 });
+      values.delete(lockKey);
+      return Response.json({ result: 1 });
     }
     if (operation === "DEL") {
       const existed = values.delete(key);

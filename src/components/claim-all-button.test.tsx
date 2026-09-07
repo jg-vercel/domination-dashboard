@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClaimAllButton } from "./claim-all-button";
+import { CLAIM_ACTION_NOTICE } from "@/lib/claims/presentation";
 
 const { refreshMock } = vi.hoisted(() => ({ refreshMock: vi.fn() }));
 
@@ -34,7 +35,7 @@ describe("ClaimAllButton", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([1, 5])("confirms all %i linked accounts and sends the session CSRF header", async (accountCount) => {
+  it.each([1, 5])("processes all %i linked accounts with one click and the session CSRF header", async (accountCount) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
         ok: true,
@@ -51,7 +52,7 @@ describe("ClaimAllButton", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const confirmMock = vi.fn(() => true);
+    const confirmMock = vi.fn(() => false);
     vi.stubGlobal("confirm", confirmMock);
 
     render(
@@ -62,14 +63,15 @@ describe("ClaimAllButton", () => {
         disabledReason="버튼을 누를 때만 실행합니다."
       />,
     );
+    expect(screen.getByText(CLAIM_ACTION_NOTICE)).toBeInTheDocument();
+    expect(screen.getByRole("button")).toHaveAccessibleDescription(CLAIM_ACTION_NOTICE);
+    expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(
-      screen.getByRole("button", { name: "모든 계정에서 무료 토큰 수령" }),
+      screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" }),
     );
 
     expect(await screen.findByText("수령 성공")).toBeInTheDocument();
-    expect(confirmMock).toHaveBeenCalledExactlyOnceWith(
-      `연결된 게임 계정 ${accountCount}개에서 무료 Legendary Token 수령을 시작할까요?`,
-    );
+    expect(confirmMock).not.toHaveBeenCalled();
     expect(screen.getByText("Commander 1 · ••••0001")).toBeInTheDocument();
     const request = fetchMock.mock.calls[0];
     expect(request?.[0]).toBe("/api/claims/free-legendary-token");
@@ -77,6 +79,8 @@ describe("ClaimAllButton", () => {
       "csrf-token",
     );
     await waitFor(() => expect(refreshMock).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" })).toBeInTheDocument();
   });
 
   it("does not send a claim for an empty account directory", () => {
@@ -144,15 +148,16 @@ describe("ClaimAllButton", () => {
     expect(screen.queryByText("중복 차단")).not.toBeInTheDocument();
     await waitFor(() => expect(refreshMock).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(confirmMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "실패·미수령 계정 다시 확인" }));
+    fireEvent.click(screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(confirmMock).toHaveBeenCalledTimes(2);
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 
   it.each([
     { reason: undefined }, { reason: 123 }, { reason: "CONFIRMED", replayed: "true" },
+    { reason: "FREE_PURCHASE_ACCEPTED", recovered: "true" },
   ])("rejects malformed result fields without reporting completion: %j", async (override) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
       ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true,
@@ -170,14 +175,45 @@ describe("ClaimAllButton", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
-  it("does not send a purchase when confirmation is cancelled", () => {
-    const fetchMock = vi.fn<typeof fetch>();
+  it("ignores repeat clicks while the one-click request is still running", async () => {
+    let resolveRequest!: (response: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>().mockReturnValue(new Promise<Response>((resolve) => { resolveRequest = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", vi.fn(() => false));
     render(<ClaimAllButton enabled accountCount={1} csrfToken="csrf" disabledReason="ready" />);
 
     fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button"));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button")).toBeDisabled();
+    expect(screen.getByText(CLAIM_ACTION_NOTICE)).toBeInTheDocument();
+    resolveRequest(Response.json({ ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true, results: [] }));
+    expect(await screen.findByText("Cycle 2026-08-28 처리 결과")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("shows recovered free acceptance separately from new uncertain outcomes", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      ok: true, cycle: { id: "2026-08-28" }, auditRecorded: true,
+      results: [
+        { accountName: "Recovered", maskedAccountId: "••••0001", status: "success", reason: "FREE_PURCHASE_ACCEPTED", recovered: true },
+        { accountName: "Uncertain", maskedAccountId: "••••0002", status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED" },
+        { accountName: "Unavailable", maskedAccountId: "••••0003", status: "uncertain", reason: "LEGACY_RECOVERY_UNAVAILABLE" },
+      ],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ClaimAllButton enabled accountCount={3} csrfToken="csrf" disabledReason="ready" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "전체 계정 무료 토큰 수령" }));
+
+    expect(await screen.findByText("이전 미확인 요청 재처리")).toBeInTheDocument();
+    expect(screen.getAllByText("수령 성공")).toHaveLength(1);
+    expect(screen.getAllByText("직접 확인 필요")).toHaveLength(2);
+    expect(screen.getByText("상점의 무료 수령 성공 응답을 확인했습니다. 게임 반영까지 시간이 걸릴 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByText("이번 요청의 결과를 확인하지 못해 추가 전송을 보류했습니다.")).toBeInTheDocument();
+    expect(screen.getByText("이전 기록은 미확인 상태이며, 현재 수령 가능한 상품을 확인하지 못해 요청을 보내지 않았습니다.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 });

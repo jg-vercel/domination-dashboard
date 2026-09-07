@@ -1,6 +1,6 @@
 import type { ClaimAuditEntry } from "@/lib/claims/audit";
 import type { ClaimResultStatus } from "@/lib/claims/service";
-import { REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "@/lib/claims/presentation";
+import { RECOVERED_CLAIM_LABEL, REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "@/lib/claims/presentation";
 
 export function ClaimAuditList({ entries }: { entries: ClaimAuditEntry[] }) {
   return (
@@ -45,6 +45,7 @@ export function ClaimAuditList({ entries }: { entries: ClaimAuditEntry[] }) {
                     <br />
                     <span>{claimReasonLabel(result.reason)}</span>
                     {result.replayed && <><br /><span>{REPLAYED_CLAIM_LABEL}</span></>}
+                    {result.recovered && <><br /><span>{RECOVERED_CLAIM_LABEL}</span></>}
                   </div>
                 ))}
               </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CLAIM_RETRY_GUIDANCE, REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "./presentation";
+import { CLAIM_ACTION_NOTICE, CLAIM_RETRY_GUIDANCE, RECOVERED_CLAIM_LABEL, REPLAYED_CLAIM_LABEL, claimReasonLabel, claimStatusLabel } from "./presentation";
 
 describe("claim result presentation", () => {
   it.each([
@@ -15,6 +15,7 @@ describe("claim result presentation", () => {
     "ITEM_NOT_VERIFIED", "ITEM_NOT_AVAILABLE", "PAID_TOKEN_REJECTED", "UPSTREAM_BEFORE_PURCHASE",
     "POST_PURCHASE_UNCONFIRMED", "STORE_PURCHASE_REJECTED", "STORE_PURCHASE_LIMIT",
     "STORE_ITEM_UNAVAILABLE", "PREVIOUS_OUTCOME_UNKNOWN",
+    "FREE_PURCHASE_ACCEPTED", "PURCHASE_RESPONSE_UNCONFIRMED", "LEGACY_RECOVERY_UNAVAILABLE",
   ])("provides a Korean explanation for %s", (reason) => {
     expect(claimReasonLabel(reason)).toMatch(/[가-힣]/);
     expect(claimReasonLabel(reason)).not.toBe("수령 결과를 확인해 주세요.");
@@ -26,7 +27,18 @@ describe("claim result presentation", () => {
     expect(claimReasonLabel("STORE_PURCHASE_LIMIT")).toContain("한도에 도달해 재전송을 보류");
     expect(claimReasonLabel("PREVIOUS_OUTCOME_UNKNOWN")).toContain("확인할 수 없어 재전송하지 않았습니다");
     expect(REPLAYED_CLAIM_LABEL).toBe("이전 기록 · 재전송하지 않음");
-    expect(CLAIM_RETRY_GUIDANCE).toContain("결과 미확인 요청은 다시 보내지 않습니다");
+    expect(CLAIM_RETRY_GUIDANCE).toContain("이번 요청의 결과가 불명확하면 추가 전송을 보류");
+    expect(CLAIM_ACTION_NOTICE).toContain("기존 결과 미확인 계정은 상점의 최신 상태를 확인한 뒤 필요한 경우 1회 재시도");
+    expect(CLAIM_ACTION_NOTICE).toContain("이미 성공한 계정은 제외");
+    expect(CLAIM_ACTION_NOTICE).toContain("상점 한도");
+    expect(RECOVERED_CLAIM_LABEL).toBe("이전 미확인 요청 재처리");
+  });
+
+  it("distinguishes an official free success response from uncertain or unavailable recovery", () => {
+    expect(claimReasonLabel("FREE_PURCHASE_ACCEPTED")).toContain("무료 수령 성공 응답을 확인");
+    expect(claimReasonLabel("FREE_PURCHASE_ACCEPTED")).toContain("게임 반영까지 시간이 걸릴 수");
+    expect(claimReasonLabel("PURCHASE_RESPONSE_UNCONFIRMED")).toContain("추가 전송을 보류");
+    expect(claimReasonLabel("LEGACY_RECOVERY_UNAVAILABLE")).toContain("요청을 보내지 않았습니다");
   });
 
   it("does not call a legacy unverified token a confirmed paid checkout", () => {

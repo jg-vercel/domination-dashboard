@@ -34,6 +34,7 @@ export interface AccountClaimResult {
   maskedAccountId: string;
   status: ClaimResultStatus;
   replayed?: true;
+  recovered?: true;
   reason:
     | "CONFIRMED"
     | "ALREADY_CLAIMED"
@@ -47,6 +48,9 @@ export interface AccountClaimResult {
     | "STORE_PURCHASE_LIMIT"
     | "STORE_ITEM_UNAVAILABLE"
     | "PREVIOUS_OUTCOME_UNKNOWN"
+    | "FREE_PURCHASE_ACCEPTED"
+    | "PURCHASE_RESPONSE_UNCONFIRMED"
+    | "LEGACY_RECOVERY_UNAVAILABLE"
     | "UPSTREAM_BEFORE_PURCHASE"
     | "POST_PURCHASE_UNCONFIRMED";
 }
@@ -120,6 +124,7 @@ export async function claimFreeLegendaryTokenForAllAccounts(
         status: result.status,
         reason: result.reason,
         replayed: result.replayed === true,
+        recovered: result.recovered === true,
       });
     }
 
@@ -154,60 +159,15 @@ async function claimAccount(
   );
   const ledgerKey = `domi:claim:ledger:${cycle.id}:${accountHash}`;
   const accountLockKey = `domi:claim:account:${cycle.id}:${accountHash}`;
+  const recoveryKey = `domi:claim:recovery:${cycle.id}:${accountHash}`;
   const publicAccount = {
     accountName: account.name,
     maskedAccountId: maskAccountId(account.gameAccountId),
   };
   const previousResult = await store.get(ledgerKey);
 
-  if (previousResult !== null) {
+  if (previousResult !== null && ledgerAction(previousResult) === "skip") {
     return { ...publicAccount, ...readPreviousOutcome(previousResult) };
-  }
-
-  let products: StoreProduct[];
-  try {
-    products = await getProductsForAccount(
-      session.dominations,
-      account.gameAccountId,
-      fetchImplementation,
-    );
-  } catch (error) {
-    if (error instanceof AuthError && error.code === "SESSION_EXPIRED") throw error;
-    return {
-      ...publicAccount,
-      status: "failed",
-      reason: "UPSTREAM_BEFORE_PURCHASE",
-    };
-  }
-
-  const target = findTargetProduct(products);
-  const targetState = getProductState(target);
-
-  if (!target) {
-    return { ...publicAccount, status: "ineligible", reason: "ITEM_MISSING" };
-  }
-  if (targetState.state === "claimed") {
-    const result: AccountClaimResult = {
-      ...publicAccount,
-      status: "already_claimed",
-      reason: "ALREADY_CLAIMED",
-    };
-    await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
-    return result;
-  }
-  if (targetState.state === "unverified") {
-    return {
-      ...publicAccount,
-      status: "ineligible",
-      reason: "ITEM_NOT_VERIFIED",
-    };
-  }
-  if (targetState.state !== "available") {
-    return {
-      ...publicAccount,
-      status: "ineligible",
-      reason: "ITEM_NOT_AVAILABLE",
-    };
   }
 
   const accountOwner = createOwnerToken();
@@ -227,12 +187,65 @@ async function claimAccount(
   let purchaseSent = false;
   let durableOutcomeRecorded = false;
   let definitelyNotPurchased = false;
+  let recoveryStarted = false;
+  let purchaseAcknowledged = false;
   try {
-    // A prior owner may have finished while this request fetched the catalog.
-    // Recheck under the account lock before sending anything to the store.
+    // A prior owner may have finished before we acquired this account lock.
     const completedWhileWaiting = await store.get(ledgerKey);
-    if (completedWhileWaiting !== null) {
+    if (completedWhileWaiting !== null && ledgerAction(completedWhileWaiting) === "skip") {
       return { ...publicAccount, ...readPreviousOutcome(completedWhileWaiting) };
+    }
+    const recoverLegacy = completedWhileWaiting !== null && ledgerAction(completedWhileWaiting) === "recover";
+    if (recoverLegacy && await store.get(recoveryKey) !== null) {
+      return { ...publicAccount, status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true };
+    }
+
+    let products: StoreProduct[];
+    try {
+      products = await getProductsForAccount(
+        session.dominations,
+        account.gameAccountId,
+        fetchImplementation,
+      );
+    } catch {
+      if (recoverLegacy) {
+        return { ...publicAccount, status: "uncertain", reason: "LEGACY_RECOVERY_UNAVAILABLE", replayed: true };
+      }
+      return { ...publicAccount, status: "failed", reason: "UPSTREAM_BEFORE_PURCHASE" };
+    }
+    const target = findTargetProduct(products);
+    const targetState = getProductState(target);
+
+    // Current availability is a condition for the user-authorized, one-time
+    // recovery attempt, not proof that the original purchase failed.
+    if (recoverLegacy && targetState.state !== "available") {
+      return { ...publicAccount, status: "uncertain", reason: "LEGACY_RECOVERY_UNAVAILABLE", replayed: true };
+    }
+    if (!target) {
+      return { ...publicAccount, status: "ineligible", reason: "ITEM_MISSING" };
+    }
+    if (targetState.state === "claimed") {
+      const result: AccountClaimResult = { ...publicAccount, status: "already_claimed", reason: "ALREADY_CLAIMED" };
+      await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+      return result;
+    }
+    if (targetState.state === "unverified") {
+      return { ...publicAccount, status: "ineligible", reason: "ITEM_NOT_VERIFIED" };
+    }
+    if (targetState.state !== "available") {
+      return { ...publicAccount, status: "ineligible", reason: "ITEM_NOT_AVAILABLE" };
+    }
+    if (recoverLegacy) {
+      // Preserve the entire original record before replacing its result.
+      // This durable marker also prevents a second recovery after a crash.
+      recoveryStarted = await store.setNx(
+        recoveryKey,
+        JSON.stringify({ version: 2, state: "in_flight", previousRecord: completedWhileWaiting }),
+        cycle.ledgerTtlSeconds,
+      );
+      if (!recoveryStarted) {
+        return { ...publicAccount, status: "uncertain", reason: "PURCHASE_RESPONSE_UNCONFIRMED", replayed: true };
+      }
     }
     purchaseSent = true;
     await startFreePurchase(
@@ -241,47 +254,23 @@ async function claimAccount(
       target,
       fetchImplementation,
     );
+    purchaseAcknowledged = true;
 
-    let result: AccountClaimResult;
-    try {
-      const refreshedProducts = await getProductsForAccount(
-        session.dominations,
-        account.gameAccountId,
-        fetchImplementation,
-      );
-      const refreshedTarget = findTargetProduct(refreshedProducts);
-      const refreshedState = getProductState(refreshedTarget);
-      const sameOffer =
-        refreshedTarget?.sku === target.sku &&
-        refreshedTarget.offerId === target.offerId;
-      const stockDecreased =
-        target.stockAvailable !== null &&
-        refreshedTarget?.stockAvailable !== null &&
-        refreshedTarget?.stockAvailable !== undefined &&
-        refreshedTarget.stockAvailable < target.stockAvailable;
-      // A disabled/locked listing alone is not evidence of delivery.
-      const confirmed = sameOffer &&
-        (refreshedState.state === "claimed" || stockDecreased);
-
-      result = confirmed
-        ? { ...publicAccount, status: "success", reason: "CONFIRMED" }
-        : {
-            ...publicAccount,
-            status: "uncertain",
-            reason: "POST_PURCHASE_UNCONFIRMED",
-          };
-    } catch {
-      result = {
-        ...publicAccount,
-        status: "uncertain",
-        reason: "POST_PURCHASE_UNCONFIRMED",
-      };
-    }
-
+    // The official free flow completes on orderAccessToken === "free".
+    // Catalog refresh is not an order receipt and may lag behind acceptance.
+    const result: AccountClaimResult = {
+      ...publicAccount,
+      status: "success",
+      reason: "FREE_PURCHASE_ACCEPTED",
+      ...(recoveryStarted ? { recovered: true as const } : {}),
+    };
     await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
     durableOutcomeRecorded = true;
     return result;
   } catch (error) {
+    // Storage failures are not store rejections. Preserve existing evidence,
+    // and retain the lock if a free acknowledgment could not be persisted.
+    if (!purchaseSent || purchaseAcknowledged) throw error;
     if (error instanceof AuthError) {
       console.warn("Free token purchase response", {
         code: error.code,
@@ -299,6 +288,7 @@ async function claimAccount(
       const itemUnavailable = failure === "InvalidItem" || failure === "UnknownItem" || failure === "ItemNotAvailable";
       const result: AccountClaimResult = {
         ...publicAccount,
+        ...(recoveryStarted ? { recovered: true as const } : {}),
         status: limitReached ? "ineligible" : "failed",
         reason: limitReached
           ? "STORE_PURCHASE_LIMIT"
@@ -306,12 +296,10 @@ async function claimAccount(
             ? "STORE_ITEM_UNAVAILABLE"
             : "STORE_PURCHASE_REJECTED",
       };
-      // Preserve the store's purchase limit. Other explicit rejections did
-      // not complete a purchase: retain their audit, not a blocking ledger.
-      if (limitReached) {
-        await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
-        durableOutcomeRecorded = true;
-      }
+      // Only versioned, explicit non-limit rejections may be retried by a
+      // later button click. Unknown outcomes must never enter that path.
+      await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
+      durableOutcomeRecorded = true;
       return result;
     }
     const paidTokenRejected =
@@ -324,11 +312,10 @@ async function claimAccount(
         }
       : {
           ...publicAccount,
-          status: purchaseSent ? "uncertain" : "failed",
-          reason: purchaseSent
-            ? "POST_PURCHASE_UNCONFIRMED"
-            : "UPSTREAM_BEFORE_PURCHASE",
+          status: "uncertain",
+          reason: "PURCHASE_RESPONSE_UNCONFIRMED",
         };
+    if (recoveryStarted) result.recovered = true;
 
     await writeLedger(store, ledgerKey, result, cycle.ledgerTtlSeconds);
     durableOutcomeRecorded = true;
@@ -340,23 +327,44 @@ async function claimAccount(
   }
 }
 
-function readPreviousOutcome(value: string): Pick<AccountClaimResult, "status" | "reason" | "replayed"> {
+function ledgerAction(value: string): "skip" | "recover" | "retry_rejection" {
+  try {
+    const payload: unknown = JSON.parse(value);
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return "skip";
+    const record = payload as Record<string, unknown>;
+    if (!Object.hasOwn(record, "version") && record.status === "uncertain" && record.reason === "POST_PURCHASE_UNCONFIRMED") {
+      return "recover";
+    }
+    if (record.version === 2 && record.status === "failed" &&
+      (record.reason === "STORE_PURCHASE_REJECTED" || record.reason === "STORE_ITEM_UNAVAILABLE")) {
+      return "retry_rejection";
+    }
+  } catch {
+    // Unrecognized/corrupt records are not authorized recovery candidates.
+  }
+  return "skip";
+}
+
+function readPreviousOutcome(value: string): Pick<AccountClaimResult, "status" | "reason" | "replayed" | "recovered"> {
   try {
     const payload: unknown = JSON.parse(value);
     if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-      const { status, reason } = payload as Record<string, unknown>;
+      const { status, reason, version, recovered } = payload as Record<string, unknown>;
       // Old paid-token records also include malformed/denied responses from
       // the old adapter. They cannot be safely reclassified as retryable.
       const recognized =
         (status === "success" && reason === "CONFIRMED") ||
+        (version === 2 && status === "success" && reason === "FREE_PURCHASE_ACCEPTED") ||
         (status === "already_claimed" && reason === "ALREADY_CLAIMED") ||
         (status === "uncertain" && reason === "POST_PURCHASE_UNCONFIRMED") ||
+        (version === 2 && status === "uncertain" && reason === "PURCHASE_RESPONSE_UNCONFIRMED") ||
         (status === "ineligible" && (reason === "PAID_TOKEN_REJECTED" || reason === "STORE_PURCHASE_LIMIT"));
       if (recognized) {
         return {
           status: status as ClaimResultStatus,
           reason: reason as AccountClaimResult["reason"],
           replayed: true,
+          ...(version === 2 && recovered === true ? { recovered: true as const } : {}),
         };
       }
     }
@@ -383,8 +391,10 @@ async function writeLedger(
   await store.set(
     key,
     JSON.stringify({
+      version: 2,
       status: result.status,
       reason: result.reason,
+      ...(result.recovered ? { recovered: true } : {}),
       recordedAt: new Date().toISOString(),
     }),
     ttlSeconds,

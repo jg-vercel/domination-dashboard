@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import {
+  CLAIM_ACTION_NOTICE,
   CLAIM_RETRY_GUIDANCE,
+  RECOVERED_CLAIM_LABEL,
   REPLAYED_CLAIM_LABEL,
   claimReasonLabel,
   claimStatusLabel,
@@ -24,6 +26,7 @@ interface ClaimResult {
   status: ClaimStatus;
   reason: string;
   replayed?: true;
+  recovered?: true;
 }
 
 interface ClaimResponse {
@@ -53,7 +56,7 @@ export function ClaimAllButton({
   accountCount,
   csrfToken,
   disabledReason,
-  buttonLabel = "모든 계정에서 무료 토큰 수령",
+  buttonLabel = "전체 계정 무료 토큰 수령",
 }: {
   enabled: boolean;
   accountCount: number;
@@ -63,17 +66,12 @@ export function ClaimAllButton({
 }) {
   const router = useRouter();
   const [state, setState] = useState<ButtonState>({ status: "idle" });
+  const requestInFlight = useRef(false);
+  const noticeId = useId();
 
   async function claimAll() {
-    if (!enabled || accountCount < 1 || !csrfToken) return;
-    if (
-      !window.confirm(
-        `연결된 게임 계정 ${accountCount}개에서 무료 Legendary Token 수령을 시작할까요?`,
-      )
-    ) {
-      return;
-    }
-
+    if (!enabled || accountCount < 1 || !csrfToken || requestInFlight.current) return;
+    requestInFlight.current = true;
     setState({ status: "loading" });
     try {
       const response = await fetch("/api/claims/free-legendary-token", {
@@ -103,6 +101,8 @@ export function ClaimAllButton({
         message:
           "수령을 확정하지 못했습니다. 결과를 확인하기 전 다시 누르지 마세요.",
       });
+    } finally {
+      requestInFlight.current = false;
     }
   }
 
@@ -113,15 +113,15 @@ export function ClaimAllButton({
         type="button"
         disabled={!enabled || accountCount < 1 || state.status === "loading"}
         onClick={claimAll}
+        aria-describedby={noticeId}
       >
         {state.status === "loading"
           ? `${accountCount}개 계정 순차 확인 중…`
-          : state.status === "complete"
-            ? "실패·미수령 계정 다시 확인"
-            : buttonLabel}
+          : buttonLabel}
         {enabled && state.status !== "loading" ? <span aria-hidden="true">→</span> : null}
       </button>
 
+      <p className="button-hint" id={noticeId}>{CLAIM_ACTION_NOTICE}</p>
       {state.status === "idle" && <p className="button-hint">{disabledReason}</p>}
       {state.status === "error" && (
         <p className="claim-error" role="alert">{state.message}</p>
@@ -139,6 +139,7 @@ export function ClaimAllButton({
               </div>
               <p className="button-hint">{claimReasonLabel(result.reason)}</p>
               {result.replayed && <p className="audit-warning">{REPLAYED_CLAIM_LABEL}</p>}
+              {result.recovered && <p className="audit-warning">{RECOVERED_CLAIM_LABEL}</p>}
             </div>
           ))}
           <p className="audit-warning">{CLAIM_RETRY_GUIDANCE}</p>
@@ -178,6 +179,7 @@ function isClaimResponse(value: unknown): value is ClaimResponse {
         typeof result.status === "string" &&
         typeof result.reason === "string" &&
         (result.replayed === undefined || result.replayed === true) &&
+        (result.recovered === undefined || result.recovered === true) &&
         claimStatuses.includes(result.status as ClaimStatus),
     )
   );

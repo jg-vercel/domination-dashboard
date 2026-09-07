@@ -65,4 +65,19 @@ describe("ClaimAuditList", () => {
     expect(screen.getByText("무료 수령 응답을 확인하지 못해 재전송을 보류했습니다.")).toBeInTheDocument();
     expect(screen.queryByText(/유료/)).not.toBeInTheDocument();
   });
+
+  it("marks recovered requests and explains authoritative free acceptance in saved results", () => {
+    render(<ClaimAuditList entries={[{
+      version: 1, cycleId: "2026-08-28", executedAt: "2026-08-28T00:01:00.000Z",
+      summary: { success: 1, already_claimed: 0, duplicate: 0, ineligible: 0, failed: 0, uncertain: 0 },
+      results: [
+        { accountName: "Recovered", maskedAccountId: "••••0001", status: "success", reason: "FREE_PURCHASE_ACCEPTED", recovered: true },
+      ],
+    }]} />);
+
+    expect(screen.getByText("Recovered · ••••0001 · 수령 성공")).toBeInTheDocument();
+    expect(screen.getByText("이전 미확인 요청 재처리")).toBeInTheDocument();
+    expect(screen.getByText("상점의 무료 수령 성공 응답을 확인했습니다. 게임 반영까지 시간이 걸릴 수 있습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("이전 기록 · 재전송하지 않음")).not.toBeInTheDocument();
+  });
 });

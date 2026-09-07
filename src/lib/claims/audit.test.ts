@@ -84,13 +84,13 @@ describe("claim audit", () => {
     expect(parseAuditEntry("not-json")).toBeNull();
   });
 
-  it.each(["STORE_PURCHASE_REJECTED", "STORE_PURCHASE_LIMIT", "STORE_ITEM_UNAVAILABLE", "PREVIOUS_OUTCOME_UNKNOWN"])("preserves safe new reason %s and the replay flag", (reason) => {
+  it.each(["STORE_PURCHASE_REJECTED", "STORE_PURCHASE_LIMIT", "STORE_ITEM_UNAVAILABLE", "PREVIOUS_OUTCOME_UNKNOWN", "FREE_PURCHASE_ACCEPTED", "PURCHASE_RESPONSE_UNCONFIRMED", "LEGACY_RECOVERY_UNAVAILABLE"])("preserves safe new reason %s and recovery/replay flags", (reason) => {
     const payload = {
       version: 1, cycleId: "2026-08-28", executedAt: "2026-08-28T00:01:00.000Z", summary,
-      results: [{ ...safeResult, reason, replayed: true, rawResponse: "private response" }],
+      results: [{ ...safeResult, reason, replayed: true, recovered: true, rawResponse: "private response" }],
     };
     const parsed = parseAuditEntry(JSON.stringify(payload));
-    expect(parsed?.results).toEqual([{ ...safeResult, reason, replayed: true }]);
+    expect(parsed?.results).toEqual([{ ...safeResult, reason, replayed: true, recovered: true }]);
     expect(JSON.stringify(parsed)).not.toContain("private response");
   });
 });
