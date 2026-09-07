@@ -119,7 +119,7 @@ function bridgeErrorMessage(code: string): string {
     AUTH_REQUIRED: "대시보드 로그인이 만료되었습니다. Google 로그인 후 다시 연결해 주세요.",
     BRIDGE_TOKEN_INVALID: "공식 로그인 정보 형식이 올바르지 않습니다. 공식 상점에 다시 로그인해 주세요.",
     BRIDGE_TOKEN_REJECTED: "공식 로그인이 만료되었거나 거부되었습니다. 공식 상점에서 다시 로그인해 주세요.",
-    ACCOUNT_COUNT_MISMATCH: "연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
+    ACCOUNT_DIRECTORY_INVALID: "게임 계정 목록을 확인하지 못했습니다. 계정 연결을 다시 시도해 주세요.",
     SESSION_STORE_UNAVAILABLE: "세션 저장소에 잠시 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.",
   };
   return messages[code] ?? "안전하게 연결을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.";

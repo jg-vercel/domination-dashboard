@@ -10,7 +10,7 @@ export type AuthErrorCode =
   | "DOMINATIONS_SIGNUP_REJECTED"
   | "DOMINATIONS_TOKEN_REJECTED"
   | "DOMINATIONS_SESSION_REQUIRED"
-  | "ACCOUNT_COUNT_MISMATCH"
+  | "ACCOUNT_DIRECTORY_INVALID"
   | "SESSION_INVALID"
   | "SESSION_EXPIRED"
   | "SESSION_TOO_LARGE"
@@ -26,6 +26,7 @@ export interface AuthDiagnostic {
     | "dominations_token"
     | "game_account_list"
     | "linked_accounts"
+    | "game_account_info"
     | "store_products"
     | "free_purchase";
   status?: number;

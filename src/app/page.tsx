@@ -24,8 +24,6 @@ import {
   getRedisReadiness,
 } from "@/lib/idempotency/redis-rest";
 
-const emptyAccountSlots = [1, 2, 3];
-
 interface HomeProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
@@ -85,17 +83,22 @@ export default async function Home({ searchParams }: HomeProps) {
       .length ?? 0;
   const authError = authErrorFromRedirect || sessionError;
   const claimEnabled = Boolean(
-    session?.dominations && snapshot?.ready && redisReadiness.configured,
+    session?.dominations &&
+      snapshot?.ready &&
+      connectedCount > 0 &&
+      redisReadiness.configured,
   );
   const claimDisabledReason = !session
     ? "Google 로그인과 계정 확인이 필요합니다."
     : !session.dominations || !snapshot
       ? "위의 Domi 연결 버튼으로 게임 계정을 확인해 주세요."
-    : !snapshot?.ready
-      ? "3개 계정의 exact 무료 상품 검증이 필요합니다."
-      : !redisReadiness.configured
-        ? "중복 방지용 Upstash Redis 설정이 필요합니다."
-        : "버튼을 누를 때만 3개 계정을 순차 처리합니다.";
+      : connectedCount === 0
+        ? "이 계정에 연결된 게임 계정이 없습니다."
+        : !snapshot.ready
+          ? "연결된 계정의 무료 상품 확인이 필요합니다."
+          : !redisReadiness.configured
+            ? "중복 방지용 Upstash Redis 설정이 필요합니다."
+            : `버튼을 누를 때만 연결된 ${connectedCount}개 계정을 순차 처리합니다.`;
 
   return (
     <div className="app-shell">
@@ -149,7 +152,7 @@ export default async function Home({ searchParams }: HomeProps) {
             <p className="eyebrow light">WEB SPECIALS</p>
             <h2>Free Legendary Token</h2>
             <p>
-              연결된 게임 계정 3개에서 매일 한 번, 사용자 버튼으로 안전하게
+              연결된 모든 게임 계정에서 매일 한 번, 사용자 버튼으로 안전하게
               수령합니다.
             </p>
             <div className="hero-meta">
@@ -175,17 +178,17 @@ export default async function Home({ searchParams }: HomeProps) {
             <span className="stat-icon amber">♙</span>
             <div>
               <p>연결 계정</p>
-              <strong>{connectedCount} <small>/ 3</small></strong>
+              <strong>{connectedCount} <small>개</small></strong>
             </div>
-            <span className={`card-status ${connectedCount === 3 ? "success" : "pending"}`}>
-              {connectedCount === 3 ? "연결됨" : "연결 전"}
+            <span className={`card-status ${snapshot ? "success" : "pending"}`}>
+              {snapshot ? "연결됨" : "연결 전"}
             </span>
           </article>
           <article className="stat-card">
             <span className="stat-icon blue">✓</span>
             <div>
               <p>오늘 수령</p>
-              <strong>{claimedCount} <small>/ 3</small></strong>
+              <strong>{claimedCount} <small>/ {connectedCount}</small></strong>
             </div>
             <span className="card-status neutral">실시간</span>
           </article>
@@ -208,38 +211,41 @@ export default async function Home({ searchParams }: HomeProps) {
                 <p className="eyebrow">GAME ACCOUNTS</p>
                 <h2 id="accounts-title">수령 대상 계정</h2>
               </div>
-              <span className="secure-badge">{connectedCount}/3 linked</span>
+              <span className="secure-badge">{connectedCount}개 계정</span>
             </div>
 
             <div className="account-list">
-              {snapshot
+              {snapshot && connectedCount > 0
                 ? snapshot.accounts.map((account, index) => (
                     <ConnectedAccountRow
                       account={account}
                       index={index}
-                      key={account.maskedId}
+                      key={`${index}:${account.maskedId}`}
                     />
                   ))
-                : emptyAccountSlots.map((slot) => (
-                    <div className="account-row" key={slot}>
-                      <span className="account-number">0{slot}</span>
+                : (
+                    <div className="account-row">
+                      <span className="account-number">—</span>
                       <div>
-                        <strong>계정 {slot}</strong>
+                        <strong>{snapshot ? "연결된 게임 계정이 없습니다." : "게임 계정을 연결해 주세요."}</strong>
                         <small>
-                          {authReadiness.configured
-                            ? session
-                              ? "Domi 연결 버튼으로 계정을 확인해 주세요."
-                              : "Google 로그인 후 연결을 시작합니다."
-                            : "OAuth 환경 변수 설정이 필요합니다."}
+                          {snapshot
+                            ? "게임 계정 연결 상태를 확인한 뒤 계정 연결 새로고침을 눌러 주세요."
+                            : authReadiness.configured
+                              ? session
+                                ? "Domi 연결 버튼으로 계정을 확인해 주세요."
+                                : "Google 로그인 후 연결을 시작합니다."
+                              : "OAuth 환경 변수 설정이 필요합니다."}
                         </small>
                       </div>
-                      <span className="account-state">미연결</span>
+                      <span className="account-state">{snapshot ? "계정 없음" : "미연결"}</span>
                     </div>
-                  ))}
+                  )}
             </div>
 
             <ClaimAllButton
               enabled={claimEnabled}
+              accountCount={connectedCount}
               csrfToken={session?.claimCsrfToken ?? null}
               disabledReason={claimDisabledReason}
               buttonLabel={
@@ -330,7 +336,7 @@ function ConnectedAccountRow({
 
   return (
     <div className="account-row">
-      <span className="account-number">0{index + 1}</span>
+      <span className="account-number">{String(index + 1).padStart(2, "0")}</span>
       <div>
         <strong>{account.name}</strong>
         <small>
@@ -358,7 +364,7 @@ function AuthErrorBanner({ code }: { code: string }) {
     DOMINATIONS_SIGNUP_REJECTED: "DomiNations World 로그인 시작 요청이 거부되었습니다.",
     DOMINATIONS_TOKEN_REJECTED: "DomiNations World session token 발급이 거부되었습니다.",
     DOMINATIONS_SESSION_REQUIRED: "Domi 연결 버튼으로 상점 계정을 다시 연결해 주세요.",
-    ACCOUNT_COUNT_MISMATCH: "연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
+    ACCOUNT_DIRECTORY_INVALID: "게임 계정 목록을 확인하지 못했습니다. 계정 연결을 다시 시도해 주세요.",
     SESSION_INVALID: "로그인 session이 올바르지 않아 삭제가 필요합니다.",
     SESSION_EXPIRED: "로그인 session이 만료되었습니다. 다시 로그인해 주세요.",
     SESSION_TOO_LARGE: "안전한 session 저장 한도를 초과했습니다.",

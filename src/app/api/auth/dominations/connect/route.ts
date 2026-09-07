@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     const connected = await connectStoredGoogleSession(sealedCookie, config);
     const response = NextResponse.json(
-      { ok: true, accountCount: 3 },
+      { ok: true, accountCount: connected.accountCount },
       { headers: noStoreHeaders },
     );
     response.cookies.set(
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     if (code === "GOOGLE_REFRESH_REJECTED" || code === "GOOGLE_REFRESH_TOKEN_MISSING") {
       return errorResponse(code, 401);
     }
-    if (code === "ACCOUNT_COUNT_MISMATCH") return errorResponse(code, 409);
+    if (code === "ACCOUNT_DIRECTORY_INVALID") return errorResponse(code, 409);
     if (code === "AUTH_NOT_CONFIGURED") return errorResponse(code, 503);
     return errorResponse(code, 502, diagnostic?.stage);
   }

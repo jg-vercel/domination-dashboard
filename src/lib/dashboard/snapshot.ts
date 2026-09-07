@@ -3,6 +3,7 @@ import "server-only";
 import { AuthError } from "@/lib/auth/errors";
 import type { DomiNationsCredential } from "@/lib/auth/session";
 import {
+  getGameAccountInfo,
   getLinkedAccounts,
   getProductsForAccount,
   listGameAccountIds,
@@ -53,15 +54,20 @@ export async function loadAccountDirectory(
   const linkedIds = new Set(accounts.map((account) => account.gameAccountId));
 
   if (
-    accounts.length !== 3 ||
-    linkedIds.size !== 3 ||
-    listedIds.size !== 3 ||
-    [...linkedIds].some((id) => !listedIds.has(id))
+    linkedIds.size !== accounts.length ||
+    listedIds.size !== gameIds.length
   ) {
-    throw new AuthError("ACCOUNT_COUNT_MISMATCH");
+    throw new AuthError("ACCOUNT_DIRECTORY_INVALID");
   }
 
-  return accounts;
+  // The official store merges both authentication-scoped directories. A game
+  // account may be returned by only one of them; their sets need not be equal.
+  const linkedById = new Map(accounts.map((account) => [account.gameAccountId, account]));
+  const allIds = [...new Set([...gameIds, ...linkedIds])];
+  return Promise.all(allIds.map((gameAccountId) =>
+    linkedById.get(gameAccountId) ??
+    getGameAccountInfo(credentials, gameAccountId, fetchImplementation),
+  ));
 }
 
 export async function loadDashboardSnapshot(
@@ -83,7 +89,7 @@ export async function loadDashboardSnapshot(
   );
 
   return {
-    ready: publicAccounts.every(
+    ready: publicAccounts.length > 0 && publicAccounts.every(
       (account) =>
         account.product.state !== "unverified" &&
         account.product.state !== "missing",

@@ -42,11 +42,13 @@ type ButtonState =
 
 export function ClaimAllButton({
   enabled,
+  accountCount,
   csrfToken,
   disabledReason,
   buttonLabel = "모든 계정에서 무료 토큰 수령",
 }: {
   enabled: boolean;
+  accountCount: number;
   csrfToken: string | null;
   disabledReason: string;
   buttonLabel?: string;
@@ -55,10 +57,10 @@ export function ClaimAllButton({
   const [state, setState] = useState<ButtonState>({ status: "idle" });
 
   async function claimAll() {
-    if (!enabled || !csrfToken) return;
+    if (!enabled || accountCount < 1 || !csrfToken) return;
     if (
       !window.confirm(
-        "연결된 게임 계정 3개에서 무료 Legendary Token 수령을 시작할까요?",
+        `연결된 게임 계정 ${accountCount}개에서 무료 Legendary Token 수령을 시작할까요?`,
       )
     ) {
       return;
@@ -101,11 +103,11 @@ export function ClaimAllButton({
       <button
         className={enabled ? "claim-button" : "disabled-button"}
         type="button"
-        disabled={!enabled || state.status === "loading"}
+        disabled={!enabled || accountCount < 1 || state.status === "loading"}
         onClick={claimAll}
       >
         {state.status === "loading"
-          ? "3개 계정 순차 확인 중…"
+          ? `${accountCount}개 계정 순차 확인 중…`
           : state.status === "success"
             ? "실패·미수령 계정 다시 확인"
             : buttonLabel}

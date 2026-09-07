@@ -108,8 +108,8 @@ export async function POST(request: NextRequest) {
     ) {
       return errorResponse("BRIDGE_TOKEN_REJECTED", 401);
     }
-    if (authError.code === "ACCOUNT_COUNT_MISMATCH") {
-      return errorResponse("ACCOUNT_COUNT_MISMATCH", 409);
+    if (authError.code === "ACCOUNT_DIRECTORY_INVALID") {
+      return errorResponse("ACCOUNT_DIRECTORY_INVALID", 409);
     }
     if (authError.code === "AUTH_NOT_CONFIGURED") {
       return errorResponse("BRIDGE_NOT_CONFIGURED", 503);

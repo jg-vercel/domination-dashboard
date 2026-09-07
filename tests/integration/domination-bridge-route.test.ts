@@ -45,10 +45,11 @@ describe("DomiNations official session bridge", () => {
     });
   });
 
-  it("exchanges the official token in the US backend and stores only encrypted Domi credentials", async () => {
+  it.each([0, 1, 2, 3, 4, 6])("exchanges the official token and stores encrypted Domi credentials for %i accounts", async (count) => {
     stubEnvironment();
     const { sealedCookie, csrfToken, redisValues } = await createGoogleSession();
-    const fetchMock = createBridgeFetch(redisValues);
+    const ids = Array.from({ length: count }, (_, index) => `account-${index}`);
+    const fetchMock = createBridgeFetch(redisValues, ids);
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await bridgeDomiNationsSession(
@@ -57,7 +58,7 @@ describe("DomiNations official session bridge", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true, accountCount: 3 });
+    expect(body).toEqual({ ok: true, accountCount: count });
     expect(response.headers.get("set-cookie")).toContain("domi_session=");
     expect(JSON.stringify(body)).not.toContain(xsollaToken);
     expect(response.headers.get("set-cookie")).not.toContain(xsollaToken);
@@ -120,7 +121,7 @@ class MemoryAuthStore implements AuthKeyValueStore {
   }
 }
 
-function createBridgeFetch(redisValues: Map<string, string>) {
+function createBridgeFetch(redisValues: Map<string, string>, ids = ["account-1", "account-2", "account-3"]) {
   return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("https://redis.example")) {
@@ -151,15 +152,11 @@ function createBridgeFetch(redisValues: Map<string, string>) {
       });
     }
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: { "account-1": {}, "account-2": {}, "account-3": {} } });
+      return Response.json({ gameIds: Object.fromEntries(ids.map((id) => [id, {}])) });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({
-        accounts: [
-          { gameAccountId: "account-1", name: "One" },
-          { gameAccountId: "account-2", name: "Two" },
-          { gameAccountId: "account-3", name: "Three" },
-        ],
+        accounts: ids.map((gameAccountId) => ({ gameAccountId, name: gameAccountId })),
       });
     }
     return Response.json({ error: "unexpected upstream" }, { status: 500 });

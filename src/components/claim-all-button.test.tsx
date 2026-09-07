@@ -23,6 +23,7 @@ describe("ClaimAllButton", () => {
     render(
       <ClaimAllButton
         enabled={false}
+        accountCount={0}
         csrfToken={null}
         disabledReason="중복 방지 설정이 필요합니다."
       />,
@@ -33,7 +34,7 @@ describe("ClaimAllButton", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("requires confirmation and sends the session CSRF header", async () => {
+  it.each([1, 5])("confirms all %i linked accounts and sends the session CSRF header", async (accountCount) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
         ok: true,
@@ -50,11 +51,13 @@ describe("ClaimAllButton", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    const confirmMock = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirmMock);
 
     render(
       <ClaimAllButton
         enabled
+        accountCount={accountCount}
         csrfToken="csrf-token"
         disabledReason="버튼을 누를 때만 실행합니다."
       />,
@@ -64,6 +67,9 @@ describe("ClaimAllButton", () => {
     );
 
     expect(await screen.findByText("수령 성공")).toBeInTheDocument();
+    expect(confirmMock).toHaveBeenCalledExactlyOnceWith(
+      `연결된 게임 계정 ${accountCount}개에서 무료 Legendary Token 수령을 시작할까요?`,
+    );
     expect(screen.getByText("Commander 1 · ••••0001")).toBeInTheDocument();
     const request = fetchMock.mock.calls[0];
     expect(request?.[0]).toBe("/api/claims/free-legendary-token");
@@ -71,6 +77,20 @@ describe("ClaimAllButton", () => {
       "csrf-token",
     );
     await waitFor(() => expect(refreshMock).toHaveBeenCalledOnce());
+  });
+
+  it("does not send a claim for an empty account directory", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const confirmMock = vi.fn(() => true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirmMock);
+
+    render(<ClaimAllButton enabled accountCount={0} csrfToken="csrf-token" disabledReason="연결된 게임 계정이 없습니다." />);
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByRole("button")).toBeDisabled();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("warns against retry when the result cannot be confirmed", async () => {
@@ -83,6 +103,7 @@ describe("ClaimAllButton", () => {
     render(
       <ClaimAllButton
         enabled
+        accountCount={1}
         csrfToken="csrf-token"
         disabledReason="ready"
       />,

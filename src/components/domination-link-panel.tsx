@@ -35,7 +35,9 @@ export function DominationLinkPanel({
         response.ok &&
         isRecord(payload) &&
         payload.ok === true &&
-        payload.accountCount === 3
+        typeof payload.accountCount === "number" &&
+        Number.isInteger(payload.accountCount) &&
+        payload.accountCount >= 0
       ) {
         window.location.replace("/?dominations=connected#accounts");
         return;
@@ -121,7 +123,7 @@ export function DominationLinkPanel({
       )}
       <p className="link-security-note" role="status">
         {state.status === "loading"
-          ? "Google 인증과 게임 계정 3개를 확인하고 있습니다."
+          ? "Google 인증과 연결된 모든 게임 계정을 확인하고 있습니다."
           : "계정 연결은 아이템을 수령하지 않습니다. 수령은 아래 버튼을 누를 때만 진행됩니다."}
       </p>
     </section>
@@ -141,7 +143,7 @@ function connectionErrorMessage(code: string, stage?: string): string {
     DOMINATIONS_SIGNUP_REJECTED: "DomiNations 로그인 응답을 확인하지 못했습니다. 연결 요청을 확인해야 합니다.",
     DOMINATIONS_TOKEN_REJECTED: "DomiNations 상점 토큰을 발급받지 못했습니다. 연결 요청을 확인해야 합니다.",
     DOMINATIONS_SESSION_REQUIRED: "상점에서 인증을 인정하지 않았습니다. 대시보드 로그인은 유지됩니다. Domi 연결을 다시 눌러 주세요.",
-    ACCOUNT_COUNT_MISMATCH: "이 Google 계정에 연결된 게임 계정이 정확히 3개인지 확인해 주세요.",
+    ACCOUNT_DIRECTORY_INVALID: "게임 계정 목록을 확인하지 못했습니다. 계정 연결을 다시 시도해 주세요.",
     SESSION_STORE_UNAVAILABLE: "로그인 저장소에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.",
     SESSION_TOO_LARGE: "상점 인증 정보를 저장하지 못했습니다. 연결 요청을 확인해야 합니다.",
     CSRF_REJECTED: "연결 확인 정보가 갱신되었습니다. 페이지를 새로고침한 뒤 다시 눌러 주세요.",
@@ -154,6 +156,7 @@ function connectionErrorMessage(code: string, stage?: string): string {
       dominations_signup: "DomiNations 로그인 시작",
       dominations_token: "DomiNations 토큰 발급",
       game_account_list: "게임 계정 목록 조회",
+      game_account_info: "게임 계정 정보 조회",
       linked_accounts: "게임 계정 상세 조회",
     };
     if (stages[stage]) {

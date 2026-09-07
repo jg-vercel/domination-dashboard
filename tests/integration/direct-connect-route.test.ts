@@ -87,17 +87,18 @@ describe("direct Google-to-DomiNations connection Route Handler", () => {
     },
   );
 
-  it("refreshes the stored Google login, validates three game accounts, and saves encrypted Domi credentials", async () => {
+  it.each([0, 1, 2, 3, 4, 6])("refreshes Google login and saves encrypted Domi credentials for %i accounts", async (count) => {
     stubEnvironment();
     const session = await createGoogleSession();
-    const fetchMock = createConnectFetch(session.store.values);
+    const ids = Array.from({ length: count }, (_, index) => `account-${index}`);
+    const fetchMock = createConnectFetch(session.store.values, { listedIds: ids, linkedIds: ids });
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await connectGoogleAccount(createRequest(session));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true, accountCount: 3 });
+    expect(body).toEqual({ ok: true, accountCount: count });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("set-cookie")).toContain("domi_session=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
@@ -146,7 +147,7 @@ describe("direct Google-to-DomiNations connection Route Handler", () => {
   it.each([
     { linkedIds: accountIds.slice(0, 2), listedIds: accountIds },
     { linkedIds: accountIds, listedIds: ["account-1", "account-2", "different-account"] },
-  ])("preserves prior credentials when the three-account validation fails: %j", async (directory) => {
+  ])("connects the complete union when account sources differ: %j", async (directory) => {
     stubEnvironment();
     const session = await createGoogleSession(previousCredentials);
     const fetchMock = createConnectFetch(session.store.values, directory);
@@ -154,16 +155,41 @@ describe("direct Google-to-DomiNations connection Route Handler", () => {
 
     const response = await connectGoogleAccount(createRequest(session));
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      ok: false,
-      error: { code: "ACCOUNT_COUNT_MISMATCH" },
+      ok: true,
+      accountCount: new Set([...directory.listedIds, ...directory.linkedIds]).size,
+    });
+    expect(response.headers.get("set-cookie")).toContain("domi_session=");
+    const resolved = await readSession(session);
+    expect(resolved.session.dominations?.accessToken).toBe(domiAccessToken);
+    expect(resolved.session.admin.email).toBe("admin@example.com");
+    const missingIds = directory.listedIds.filter((id) => !directory.linkedIds.includes(id));
+    const calls = upstreamCalls(fetchMock);
+    expect(calls).toHaveLength(6 + missingIds.length);
+    expect(calls.slice(6).map(([input]) => new URL(String(input)).pathname)).toEqual(
+      missingIds.map((id) => `/api/dominations/${encodeURIComponent(id)}/user_info`),
+    );
+  });
+
+  it("preserves prior credentials when an account source contains duplicate IDs", async () => {
+    stubEnvironment();
+    const session = await createGoogleSession(previousCredentials);
+    const fetchMock = createConnectFetch(session.store.values, {
+      listedIds: ["account-1"], linkedIds: ["account-1", "account-1"],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await connectGoogleAccount(createRequest(session));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false, error: { code: "ACCOUNT_DIRECTORY_INVALID" },
     });
     expect(response.headers.get("set-cookie")).toBeNull();
     const resolved = await readSession(session);
     expect(resolved.session.dominations).toEqual(previousCredentials);
     expect(resolved.session.admin.email).toBe("admin@example.com");
-    expect(upstreamCalls(fetchMock)).toHaveLength(6);
   });
 
   it("preserves the dashboard session after Google refresh rejection so the user can sign in again", async () => {
@@ -328,6 +354,10 @@ function createConnectFetch(
     }
     if (url.origin !== "https://api.dominationsworld.com") throw new Error("Unexpected upstream origin");
     if (url.pathname === accountResponse?.path) return accountResponse.respond();
+    const userInfoPath = url.pathname.match(/^\/api\/dominations\/([^/]+)\/user_info$/);
+    if (userInfoPath) {
+      return Response.json({ name: `Direct ${decodeURIComponent(userInfoPath[1]!)}`, age: 15 });
+    }
     switch (url.pathname) {
       case "/api/accounts/signup":
         return Response.json(

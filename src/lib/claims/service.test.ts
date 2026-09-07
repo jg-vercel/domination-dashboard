@@ -31,7 +31,7 @@ const session: AppSession = {
   claimCsrfToken: "claim-csrf-token",
 };
 
-describe("three-account claim service", () => {
+describe("all-account claim service", () => {
   it("processes accounts sequentially and distinguishes success/claimed/ineligible", async () => {
     const store = new MemoryClaimStore();
     const { fetchMock, purchaseAccounts } = createClaimFetch();
@@ -95,9 +95,10 @@ describe("three-account claim service", () => {
     expect(purchaseAccounts).toEqual([accountIds[0]]);
   });
 
-  it("sends purchase requests for three eligible accounts strictly in account order", async () => {
+  it.each([0, 1, 2, 4, 6])("sends purchase requests for all %i eligible accounts strictly in account order", async (count) => {
     const store = new MemoryClaimStore();
-    const { fetchMock, purchaseAccounts } = createClaimFetch({ allAvailable: true });
+    const ids = Array.from({ length: count }, (_, index) => `game-account-${index}`);
+    const { fetchMock, purchaseAccounts } = createClaimFetch({ allAvailable: true, ids });
 
     const result = await claimFreeLegendaryTokenForAllAccounts(session, {
       store,
@@ -106,12 +107,31 @@ describe("three-account claim service", () => {
       createOwnerToken: () => "owner",
     });
 
-    expect(purchaseAccounts).toEqual(accountIds);
-    expect(result.results.map((item) => item.status)).toEqual([
-      "success",
-      "success",
-      "success",
-    ]);
+    expect(purchaseAccounts).toEqual(ids);
+    expect(result.results.map((item) => item.status)).toEqual(ids.map(() => "success"));
+    expect(result.summary.success).toBe(count);
+    if (count === 0) expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("claims each account in the union once, including accounts found in only one source", async () => {
+    const ids = ["direct-only", "shared", "linked-only"];
+    const { fetchMock, purchaseAccounts } = createClaimFetch({
+      allAvailable: true,
+      ids,
+      listedIds: ["direct-only", "shared"],
+      linkedIds: ["shared", "linked-only"],
+    });
+
+    const result = await claimFreeLegendaryTokenForAllAccounts(session, {
+      store: new MemoryClaimStore(),
+      fetchImplementation: fetchMock,
+      now: new Date("2026-08-28T00:00:00.000Z"),
+      createOwnerToken: () => "owner",
+    });
+
+    expect(purchaseAccounts).toEqual(ids);
+    expect(result.summary.success).toBe(3);
+    expect(result.results).toHaveLength(3);
   });
 
   it("blocks the whole batch when an atomic batch lock already exists", async () => {
@@ -212,26 +232,37 @@ class MemoryClaimStore implements ClaimStore {
 function createClaimFetch({
   failAccountOnePostCheck = false,
   allAvailable = false,
+  ids = accountIds,
+  listedIds = ids,
+  linkedIds = ids,
 }: {
   failAccountOnePostCheck?: boolean;
   allAvailable?: boolean;
+  ids?: string[];
+  listedIds?: string[];
+  linkedIds?: string[];
 } = {}) {
   const productReads = new Map<string, number>();
   const purchaseAccounts: string[] = [];
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: Object.fromEntries(accountIds.map((id) => [id, {}])) });
+      return Response.json({ gameIds: Object.fromEntries(listedIds.map((id) => [id, {}])) });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({
-        accounts: accountIds.map((gameAccountId, index) => ({
+        accounts: linkedIds.map((gameAccountId, index) => ({
           gameAccountId,
           name: `Commander ${index + 1}`,
           age: 12 + index,
           trophies: 1_000 + index,
         })),
       });
+    }
+
+    const userInfoPath = new URL(url).pathname.match(/^\/api\/dominations\/([^/]+)\/user_info$/);
+    if (userInfoPath) {
+      return Response.json({ name: `Direct ${decodeURIComponent(userInfoPath[1]!)}`, age: 15 });
     }
 
     const body = JSON.parse(String(init?.body)) as {
@@ -246,13 +277,13 @@ function createClaimFetch({
     productReads.set(body.gameAccountId, readCount);
     if (
       failAccountOnePostCheck &&
-      body.gameAccountId === accountIds[0] &&
+      body.gameAccountId === ids[0] &&
       readCount === 2
     ) {
       return new Response("private error", { status: 503 });
     }
 
-    const index = accountIds.indexOf(body.gameAccountId);
+    const index = ids.indexOf(body.gameAccountId);
     const confirmedAfterPurchase = (allAvailable || index === 0) && readCount > 1;
     const accountTwoClaimed = !allAvailable && index === 1;
     const stockAvailable = confirmedAfterPurchase || accountTwoClaimed ? 0 : 1;

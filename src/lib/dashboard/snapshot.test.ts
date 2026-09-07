@@ -18,12 +18,95 @@ const accountIds = [
 ];
 
 describe("dashboard snapshot", () => {
-  it("requires exactly three unique accounts in both account sources", async () => {
-    const fetchMock = createDashboardFetch({ listedIds: accountIds.slice(0, 2) });
+  it.each([0, 1, 2, 4, 6])("loads all %i accounts without a fixed-count requirement", async (count) => {
+    const ids = Array.from({ length: count }, (_, index) => `account-${index}`);
+    const fetchMock = createDashboardFetch({ listedIds: ids, linkedIds: ids });
 
-    await expect(
-      loadAccountDirectory(credentials, fetchMock),
-    ).rejects.toMatchObject({ code: "ACCOUNT_COUNT_MISMATCH" });
+    const accounts = await loadAccountDirectory(credentials, fetchMock);
+
+    expect(accounts.map((account) => account.gameAccountId)).toEqual(ids);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("unions both account sources in listed order, preserving linked metadata and adding linked-only accounts", async () => {
+    const fetchMock = createDashboardFetch({
+      listedIds: ["direct-only", "shared"],
+      linkedIds: ["linked-only", "shared"],
+    });
+
+    const accounts = await loadAccountDirectory(credentials, fetchMock);
+
+    expect(accounts.map((account) => account.gameAccountId)).toEqual([
+      "direct-only", "shared", "linked-only",
+    ]);
+    expect(accounts).toEqual([
+      expect.objectContaining({ gameAccountId: "direct-only", name: "Direct direct-only", age: 15, trophies: 2000 }),
+      expect.objectContaining({ gameAccountId: "shared", name: "Commander 2", age: 11, trophies: 1001 }),
+      expect.objectContaining({ gameAccountId: "linked-only", name: "Commander 1", age: 10, trophies: 1000 }),
+    ]);
+    const userInfoCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/user_info"));
+    expect(userInfoCalls).toHaveLength(1);
+    expect(String(userInfoCalls[0]?.[0])).toBe("https://api.dominationsworld.com/api/dominations/direct-only/user_info");
+  });
+
+  it("fetches missing metadata with an encoded account ID and authenticated GET", async () => {
+    const id = "account/with?reserved#characters";
+    const fetchMock = createDashboardFetch({ listedIds: [id], linkedIds: [] });
+
+    const accounts = await loadAccountDirectory(credentials, fetchMock);
+
+    expect(accounts[0]).toMatchObject({ gameAccountId: id, name: `Direct ${id}` });
+    const request = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/user_info"));
+    expect(String(request?.[0])).toBe(`https://api.dominationsworld.com/api/dominations/${encodeURIComponent(id)}/user_info`);
+    expect(request?.[1]?.method ?? "GET").toBe("GET");
+    const headers = new Headers(request?.[1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer dominations-bearer");
+    expect(headers.get("cookie")).toBe("domi=session");
+  });
+
+  it("keeps the requested account ID when fallback metadata contains a different ID", async () => {
+    const fetchMock = createDashboardFetch({
+      listedIds: ["requested-account"],
+      linkedIds: [],
+      userInfoResponse: () => Response.json({ gameAccountId: "different-account", name: "Commander" }),
+    });
+
+    await expect(loadAccountDirectory(credentials, fetchMock)).resolves.toEqual([
+      expect.objectContaining({ gameAccountId: "requested-account", name: "Commander" }),
+    ]);
+  });
+
+  it.each([null, [], "invalid", 1])("rejects malformed fallback metadata (%j) without dropping the account", async (payload) => {
+    const fetchMock = createDashboardFetch({
+      listedIds: ["requested-account"],
+      linkedIds: [],
+      userInfoResponse: () => Response.json(payload),
+    });
+
+    await expect(loadAccountDirectory(credentials, fetchMock)).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+    });
+  });
+
+  it.each([
+    { listedIds: ["account-1"], linkedIds: ["account-1", "account-1"] },
+    { listedIds: ["account-1", "account-1"], linkedIds: ["account-1"], legacyListedIds: true },
+  ])("rejects duplicate IDs within either source: %j", async (directory) => {
+    const fetchMock = createDashboardFetch(directory);
+
+    await expect(loadAccountDirectory(credentials, fetchMock)).rejects.toMatchObject({
+      code: "ACCOUNT_DIRECTORY_INVALID",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report an empty snapshot ready or request any products", async () => {
+    const fetchMock = createDashboardFetch({ listedIds: [], linkedIds: [] });
+
+    await expect(loadDashboardSnapshot(credentials, fetchMock)).resolves.toMatchObject({
+      ready: false, accountCount: 0, accounts: [],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns only masked account IDs and fail-closed product states", async () => {
@@ -67,25 +150,37 @@ describe("dashboard snapshot", () => {
 
 function createDashboardFetch({
   listedIds = accountIds,
+  linkedIds = accountIds,
+  legacyListedIds = false,
+  userInfoResponse,
   sectionTag = "AdditionalSpecials",
 }: {
   listedIds?: string[];
+  linkedIds?: string[];
+  legacyListedIds?: boolean;
+  userInfoResponse?: () => Response;
   sectionTag?: string;
-} = {}): typeof fetch {
+} = {}) {
   return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/gameident/dom/list")) {
-      return Response.json({ gameIds: Object.fromEntries(listedIds.map((id) => [id, {}])) });
+      return Response.json({ gameIds: legacyListedIds ? listedIds : Object.fromEntries(listedIds.map((id) => [id, {}])) });
     }
     if (url.endsWith("/api/dominations/linked_user_info")) {
       return Response.json({
-        accounts: accountIds.map((gameAccountId, index) => ({
+        accounts: linkedIds.map((gameAccountId, index) => ({
           gameAccountId,
           name: `Commander ${index + 1}`,
           age: 10 + index,
           trophies: 1_000 + index,
         })),
       });
+    }
+    const userInfoPath = new URL(url).pathname.match(/^\/api\/dominations\/([^/]+)\/user_info$/);
+    if (userInfoPath) {
+      if (userInfoResponse) return userInfoResponse();
+      const id = decodeURIComponent(userInfoPath[1]!);
+      return Response.json({ name: `Direct ${id}`, age: 15, trophies: 2000, clientMajorVersion: "12" });
     }
 
     const body = JSON.parse(String(init?.body)) as { gameAccountId: string };

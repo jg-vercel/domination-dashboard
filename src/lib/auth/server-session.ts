@@ -146,7 +146,7 @@ export async function connectStoredGoogleSession(
   sealedCookie: string,
   config: AuthConfig,
   options: ResolveSessionOptions = {},
-): Promise<ResolvedAppSession> {
+): Promise<ResolvedAppSession & { accountCount: number }> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1_000);
   const store = options.store ?? createRedisAuthStore();
   const pointer = readAppSessionPointer(sealedCookie, config.sessionSecret, nowSeconds);
@@ -156,8 +156,9 @@ export async function connectStoredGoogleSession(
   const stored = readStoredSession(storedValue, config.sessionSecret, nowSeconds);
   const googleAccessToken = await refreshGoogleAccessToken(config, stored.googleRefreshToken);
   const dominations = await connectDomiNations(googleAccessToken);
-  await loadAccountDirectory(dominations);
-  return attachDomiNationsSession(sealedCookie, dominations, config, options);
+  const accounts = await loadAccountDirectory(dominations);
+  const connected = await attachDomiNationsSession(sealedCookie, dominations, config, options);
+  return { ...connected, accountCount: accounts.length };
 }
 
 export async function destroyServerAppSession(

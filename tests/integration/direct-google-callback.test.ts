@@ -26,8 +26,9 @@ describe("Google callback direct store connection", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns a connected dashboard session when signup succeeds with an empty errorReason", async () => {
-    const { redisValues, fetchMock } = setupCallback();
+  it.each([0, 1, 2, 3, 4, 6])("returns a connected dashboard session with %i accounts and empty signup errorReason", async (count) => {
+    const ids = Array.from({ length: count }, (_, index) => `account-${index}`);
+    const { redisValues, fetchMock } = setupCallback(false, ids);
 
     const response = await completeGoogleLogin(callbackRequest());
 
@@ -102,7 +103,7 @@ describe("Google callback direct store connection", () => {
   });
 });
 
-function setupCallback(rejectStore = false) {
+function setupCallback(rejectStore = false, ids = ["account-1", "account-2", "account-3"]) {
   vi.stubEnv("GOOGLE_CLIENT_ID", "google-client-id");
   vi.stubEnv("GOOGLE_CLIENT_SECRET", "google-client-secret");
   vi.stubEnv("APP_SESSION_SECRET", sessionSecret);
@@ -140,9 +141,9 @@ function setupCallback(rejectStore = false) {
       case "/api/accounts/token":
         return Response.json({ token: "callback-domi-token", userid: "domi-user", xsid: "xsolla-user" });
       case "/api/gameident/dom/list":
-        return Response.json({ gameIds: { "account-1": {}, "account-2": {}, "account-3": {} } });
+        return Response.json({ gameIds: Object.fromEntries(ids.map((id) => [id, {}])) });
       case "/api/dominations/linked_user_info":
-        return Response.json({ accounts: ["account-1", "account-2", "account-3"].map((gameAccountId) => ({ gameAccountId, name: gameAccountId })) });
+        return Response.json({ accounts: ids.map((gameAccountId) => ({ gameAccountId, name: gameAccountId })) });
       default:
         throw new Error(`Unexpected upstream path: ${url.pathname}`);
     }

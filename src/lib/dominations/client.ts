@@ -203,6 +203,21 @@ export async function getLinkedAccounts(
   });
 }
 
+export async function getGameAccountInfo(
+  credentials: DomiNationsCredential,
+  gameAccountId: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<DomiNationsAccount> {
+  const response = await dominationsRequest(
+    `/api/dominations/${encodeURIComponent(gameAccountId)}/user_info`,
+    { method: "GET", domiCredentials: credentials },
+    fetchImplementation,
+  );
+  return readAccountResponse(response, "game_account_info", (payload) =>
+    normalizeAccount({ ...payload, gameAccountId }),
+  );
+}
+
 export async function getProductsForAccount(
   credentials: DomiNationsCredential,
   gameAccountId: string,
@@ -451,6 +466,9 @@ async function requestUpstream(
 }
 
 function upstreamStage(path: string): AuthDiagnostic["stage"] {
+  if (/^\/api\/dominations\/[^/]+\/user_info$/.test(path)) {
+    return "game_account_info";
+  }
   switch (path) {
     case "/api/social/google/login_with_token": return "xsolla_google_token";
     case "/api/accounts/signup": return "dominations_signup";
@@ -465,7 +483,7 @@ function upstreamStage(path: string): AuthDiagnostic["stage"] {
 
 async function readAccountResponse<T>(
   response: Response,
-  stage: "game_account_list" | "linked_accounts",
+  stage: "game_account_list" | "linked_accounts" | "game_account_info",
   parse: (payload: Record<string, unknown>) => T,
 ): Promise<T> {
   try {
