@@ -136,6 +136,31 @@ describe("server-side app sessions", () => {
     expect(storedValue).not.toContain("raw-dominations-token");
   });
 
+  it("keeps a returning user signed in past the original 180 days", async () => {
+    const store = new MemoryAuthStore();
+    const day = 24 * 60 * 60;
+    const created = await createServerAppSession(admin, "refresh", config, store, 1_000);
+    const returned = await resolveServerAppSession(created.sealedCookie, config, {
+      store, nowSeconds: 1_000 + 179 * day,
+    });
+    const later = await resolveServerAppSession(returned.sealedCookie, config, {
+      store, nowSeconds: 1_000 + 358 * day,
+    });
+    expect(later.session.admin).toEqual(admin);
+    expect(later.session.expiresAt).toBe(1_000 + 538 * day);
+    expect(readAppSessionPointer(later.sealedCookie, config.sessionSecret, 1_000 + 358 * day).sessionId)
+      .toBe(readAppSessionPointer(created.sealedCookie, config.sessionSecret, 1_000).sessionId);
+  });
+
+  it("requires login after 180 days without activity", async () => {
+    const store = new MemoryAuthStore();
+    const created = await createServerAppSession(admin, "refresh", config, store, 1_000);
+    await expect(resolveServerAppSession(created.sealedCookie, config, {
+      store, nowSeconds: 1_001 + APP_SESSION_IDLE_TTL_SECONDS,
+    })).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+    expect(store.writes).toHaveLength(1);
+  });
+
   it("keeps an attached DomiNations session during normal activity", async () => {
     const store = new MemoryAuthStore();
     const created = await createServerAppSession(

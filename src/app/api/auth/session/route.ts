@@ -58,7 +58,12 @@ export async function POST(request: NextRequest) {
       authError.code === "SESSION_INVALID" ||
       authError.code === "GOOGLE_REFRESH_REJECTED"
     ) {
-      return errorResponse("AUTH_REQUIRED", 401);
+      const response = errorResponse("AUTH_REQUIRED", 401);
+      response.cookies.set(APP_SESSION_COOKIE, "", {
+        ...authCookieOptions(request.nextUrl.protocol === "https:", 0),
+        expires: new Date(0),
+      });
+      return response;
     }
     if (authError.code === "AUTH_NOT_CONFIGURED") {
       return errorResponse("AUTH_NOT_CONFIGURED", 503);

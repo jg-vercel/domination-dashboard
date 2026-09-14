@@ -65,7 +65,8 @@ a:focus-visible {
 
 .brand-mark > span:last-child,
 .sidebar-footer > span:last-child,
-.profile-placeholder > div {
+.profile-placeholder > div,
+.profile-placeholder > .profile-copy {
   display: flex;
   flex-direction: column;
 }
@@ -196,6 +197,9 @@ main {
 
 .profile-link {
   color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   text-decoration: none;
   transition: border-color 150ms ease, transform 150ms ease;
 }
@@ -248,7 +252,7 @@ main {
   letter-spacing: 0.06em;
 }
 
-.profile-placeholder > span {
+.profile-placeholder > span:first-child {
   width: 32px;
   height: 32px;
   display: grid;
@@ -1142,12 +1146,13 @@ footer {
     max-width: 100%;
   }
 
-  .profile-placeholder > div {
+  .profile-placeholder > div,
+  .profile-placeholder > .profile-copy {
     min-width: 0;
     overflow-wrap: anywhere;
   }
 
-  .profile-placeholder > span {
+  .profile-placeholder > span:first-child {
     flex-shrink: 0;
   }
 

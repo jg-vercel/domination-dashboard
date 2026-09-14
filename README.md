@@ -57,3 +57,16 @@ Vercel Marketplace에서 Upstash Redis를 연결한 뒤 `UPSTASH_REDIS_REST_URL`
 수령은 매일 09:00 KST cycle 단위로 잠금·기록됩니다. exact `Web Specials > Free Legendary Token`, 무료 가격, SKU, offer, stock을 요청 직전에 다시 확인하고 `orderAccessToken`이 `free`가 아니면 외부 checkout을 열지 않습니다.
 
 실제 Vercel 배포는 작업지시자의 별도 승인을 받은 뒤 진행합니다.
+
+### 로그인 상태 유지와 설정 안내
+
+사용자는 `Google로 로그인`을 통해 인증하며 로그인 정보를 환경변수에 입력하지 않습니다. OAuth Client ID/Secret은 앱 식별용 서버 설정이고, `APP_SESSION_SECRET`은 저장된 세션의 암호화 키입니다. 배포마다 이 키를 임의로 교체하면 기존 세션을 읽을 수 없습니다.
+
+서버 세션은 마지막 정상 활동에서 180일, 브라우저 HttpOnly cookie는 갱신 시점에서 400일 유지됩니다. 화면이 표시될 때와 표시 중 1시간 간격, 탭·온라인 복귀 시 세션을 갱신합니다. 이벤트 갱신은 5분 간격으로 제한하며 숨겨진 탭은 갱신하지 않습니다. Google 권한 취소, cookie 삭제, 저장소 데이터 삭제 또는 180일 미접속 후에는 재로그인이 필요할 수 있습니다.
+
+- `Google 로그인 준비 중`: 앱의 OAuth·세션 암호화 설정을 관리자가 확인해야 합니다.
+- `로그인 저장소 준비 중`: 관리자가 Redis 연결 설정을 확인해야 합니다.
+- `로그인 상태 확인 지연`: 일시적인 서버·저장소 오류일 수 있으므로 새로고침합니다. 이 오류만으로 cookie를 삭제하지 않습니다.
+- `Google로 로그인`: 로그인하지 않았거나 세션이 만료되어 인증이 필요합니다.
+
+Vercel Preview와 Production의 환경변수·도메인·cookie는 별개입니다. 한 환경의 설정이나 로그인은 다른 환경의 로그인을 보장하지 않습니다. 운영자는 실제 접속 환경에 OAuth/Redis 설정과 고정 암호화 키를 적용하고 해당 도메인의 `APP_BASE_URL` 및 Google redirect URI를 일치시켜야 합니다. 이번 보완의 범위와 검증 결과는 `docs/report/task_m10_6_report_v2.md`에 기록합니다.

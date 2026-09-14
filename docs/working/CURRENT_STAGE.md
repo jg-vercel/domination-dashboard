@@ -8,6 +8,22 @@
 
 ## 현재 단계
 
+### 2026-09-14 최신 상태
+
+- Issue #6 후속 보완: 로그인 설정 안내 분리, 활성 탭 세션 갱신, 만료·일시 장애 구분 구현 완료.
+- 작업지시자 “완료보고서 작성단계까지 진행해”에 따라 로컬 구현·검증·보고서 작성 완료, 최종 검토 대기.
+- 기존 M1.0 / Issue #6 / `local/task6` 재사용, 변경은 로컬 미커밋 상태.
+- 단위 678개·통합 63개, lint/typecheck/build 통과. Browser 미연결로 시각 검증은 미실시.
+- 운영 주소 로그인 API `503 AUTH_NOT_CONFIGURED` 확인. Preview는 Vercel 보호 화면으로 302 리다이렉트.
+- 실제 사용자 접속 주소·세션 상태 미확인. 운영 설정·배포 및 실계정 검증은 남아 있습니다.
+- 완료보고서: `docs/report/task_m10_6_report_v2.md`
+- 테스트 결과: `docs/working/task_m10_6_test_result_v2.md`
+- 오늘할일: `docs/orders/20260914.md`
+- 계획서: `docs/plans/task_m10_6_v2.md`, `docs/plans/task_m10_6_impl_v2.md`
+- 이슈 종료·push·merge·배포는 수행하지 않았습니다.
+
+### 이전 단계 기록 (2026-08-31)
+
 - 현재 단계: M1.0 Issue #6 upstream 인증 단계 진단 패치 Preview 배포 완료, 실계정 재검증 대기
 - 승인 상태: Issue #6 계획·소스 구현·테스트·Preview 재배포 승인 완료 (2026-08-31), Production·실수령 미승인
 - 대상 문서: `docs/working/preview_us_web_store_purchase.md`

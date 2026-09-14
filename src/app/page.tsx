@@ -4,6 +4,7 @@ import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { ClaimAllButton } from "@/components/claim-all-button";
 import { ClaimAuditList } from "@/components/claim-audit-list";
 import { SessionKeepalive } from "@/components/session-keepalive";
+import { AuthControl } from "@/components/auth-control";
 import { DominationLinkPanel } from "@/components/domination-link-panel";
 import { ProductCatalogDetails } from "@/components/product-catalog-details";
 import { AccountStoreDiagnostics } from "@/components/account-store-diagnostics";
@@ -140,8 +141,10 @@ export default async function Home({ searchParams }: HomeProps) {
             <h1>오늘의 무료 보상을 준비하세요.</h1>
           </div>
           <AuthControl
-            configured={authReadiness.configured && redisReadiness.configured}
+            authConfigured={authReadiness.configured}
+            storeConfigured={redisReadiness.configured}
             session={session}
+            unavailable={sessionError === "UPSTREAM_UNAVAILABLE"}
           />
         </header>
 
@@ -268,53 +271,6 @@ export default async function Home({ searchParams }: HomeProps) {
   );
 }
 
-function AuthControl({
-  configured,
-  session,
-}: {
-  configured: boolean;
-  session: AppSession | null;
-}) {
-  if (session) {
-    return (
-      <div className="auth-control-group">
-        <div className="profile-placeholder">
-          <span>{session.admin.name.slice(0, 1).toUpperCase()}</span>
-          <div>
-            <strong>{session.admin.name}</strong>
-            <small>{session.admin.email}</small>
-          </div>
-        </div>
-        <form action="/api/auth/logout" method="post">
-          <button className="logout-button" type="submit">로그아웃</button>
-        </form>
-      </div>
-    );
-  }
-
-  if (!configured) {
-    return (
-      <div className="profile-placeholder profile-disabled" aria-label="OAuth 설정 필요">
-        <span>G</span>
-        <div>
-          <strong>Google 설정 필요</strong>
-          <small>.env.local 확인</small>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <a className="profile-placeholder profile-link" href="/api/auth/google/start">
-      <span>G</span>
-      <div>
-        <strong>Google로 연결</strong>
-        <small>게임 계정의 Google 로그인</small>
-      </div>
-    </a>
-  );
-}
-
 function ConnectedAccountRow({
   account,
   index,
@@ -365,7 +321,7 @@ function AuthErrorBanner({ code }: { code: string }) {
     DOMINATIONS_TOKEN_REJECTED: "DomiNations World session token 발급이 거부되었습니다.",
     DOMINATIONS_SESSION_REQUIRED: "Domi 연결 버튼으로 상점 계정을 다시 연결해 주세요.",
     ACCOUNT_DIRECTORY_INVALID: "게임 계정 목록을 확인하지 못했습니다. 계정 연결을 다시 시도해 주세요.",
-    SESSION_INVALID: "로그인 session이 올바르지 않아 삭제가 필요합니다.",
+    SESSION_INVALID: "로그인 상태를 확인할 수 없습니다. Google로 다시 로그인해 주세요.",
     SESSION_EXPIRED: "로그인 session이 만료되었습니다. 다시 로그인해 주세요.",
     SESSION_TOO_LARGE: "안전한 session 저장 한도를 초과했습니다.",
     UPSTREAM_UNAVAILABLE: "외부 서비스를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
