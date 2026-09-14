@@ -2,7 +2,7 @@
 
 ## 상태
 
-- 상태: 로컬 검증 완료, 운영·실계정 검증 미실시
+- 상태: 로컬 검증·운영 HTTP 검증 완료, Google redirect URI 미등록으로 실계정 검증 대기
 - 작성자: Codex
 - 작성일: 2026-09-14
 - 계획서: `docs/plans/task_m10_6_v2.md`, `docs/plans/task_m10_6_impl_v2.md`
@@ -44,3 +44,20 @@
 ## 검증 범위의 한계
 
 실제 Redis·Google 계정으로 토큰 갱신, 브라우저 종료 후 복원, 운영 도메인에서의 장기 유지, 실제 게임 연결·수령은 검증하지 않았습니다. 서버 저장소 테스트는 메모리 대역과 가상 시각, Route Handler는 세션 해석 대역을 사용합니다. 실제 설정값·토큰·cookie를 수집하거나 출력하지 않았습니다.
+
+## 운영 배포 후 추가 검증 (2026-09-14)
+
+위 실행 표의 운영 503은 배포 전 결과입니다. 작업지시자 “반영해” 승인 후 운영 설정과 배포를 적용한 결과는 다음과 같습니다.
+
+- 코드: `b118e39`, 원격 `devel`
+- 배포: `dpl_6nhBpxAXhJUZKT54zPqdtSra3so7`, Production `READY`
+- Vercel 원격 build와 TypeScript 검사 통과, runtime Node v24.19.0
+- 운영 `/`: 200, 로그인 링크 있음, `.env.local 확인` 및 설정 준비 경고 없음
+- 운영 `/api/health`: 200
+- 운영 `/api/system/region`: `iad1`, `regionMatches=true`
+- 운영 `/api/system/outbound-country`: US, `asia=false`, `targetMet=true`
+- 운영 `/api/auth/session` (미로그인, same-origin POST): 401 `AUTH_REQUIRED`
+- 운영 `/api/auth/google/start`: 307, Google로 이동, `access_type=offline`, callback은 운영 도메인과 일치
+- OAuth flow cookie: HttpOnly·Secure 확인, 값은 출력하지 않음
+- Google 인증 페이지: 200의 OAuth error 화면에서 `redirect_uri_mismatch` 확인, `invalid_client`는 없음
+- Google Cloud Console에서 운영 callback을 등록해야 실제 로그인을 검증할 수 있습니다. Browser 재연결 시도도 `No browser is available`로 실패했습니다.

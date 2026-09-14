@@ -10,6 +10,16 @@
 
 ### 2026-09-14 최신 상태
 
+- 추가 승인 “반영해”에 따라 운영 설정·Git 반영·Production 배포 완료.
+- 코드 커밋 `b118e39`, 원격 `devel`; 배포 `dpl_6nhBpxAXhJUZKT54zPqdtSra3so7`, `READY`, `iad1`.
+- 운영 URL: https://domination-dashboard.vercel.app
+- 운영 대시보드·health 200, Google 시작 API 307, 미로그인 session 401, 외부 국가 US 확인.
+- 설정 누락 503은 해소됐으나 Google 인증 페이지에서 `redirect_uri_mismatch` 발생.
+- Google Cloud Web OAuth 클라이언트에 `https://domination-dashboard.vercel.app/api/auth/google/callback` 등록 필요. Cloud connector·CLI 및 Browser 연결이 없어 직접 등록하지 못했습니다.
+- 이슈 종료·PR merge·실수령은 수행하지 않았습니다. 아래는 배포 전 로컬 완료 기록입니다.
+
+### 2026-09-14 로컬 완료 기록
+
 - Issue #6 후속 보완: 로그인 설정 안내 분리, 활성 탭 세션 갱신, 만료·일시 장애 구분 구현 완료.
 - 작업지시자 “완료보고서 작성단계까지 진행해”에 따라 로컬 구현·검증·보고서 작성 완료, 최종 검토 대기.
 - 기존 M1.0 / Issue #6 / `local/task6` 재사용, 변경은 로컬 미커밋 상태.

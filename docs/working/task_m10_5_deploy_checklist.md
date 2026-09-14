@@ -1,5 +1,16 @@
 # M1.0 Vercel 배포 체크리스트
 
+## 2026-09-14 Production 반영 갱신
+
+작업지시자 “반영해” 승인으로 Production 설정·배포를 수행했습니다. 아래의 2026-08-31 Preview 전용 승인 및 Production 미설정 표는 과거 기록입니다.
+
+- Google 2개·Redis 2개 Secret은 Preview+Production에 적용, Production 전용 세션 키 및 `APP_BASE_URL` 신규 등록.
+- 운영 배포: `dpl_6nhBpxAXhJUZKT54zPqdtSra3so7`, `READY`, `iad1`.
+- 운영 URL: https://domination-dashboard.vercel.app
+- 대시보드 200, Google 시작 307, 미로그인 session 401, 미국 outbound 확인.
+- 남은 항목: Google Cloud OAuth 클라이언트에 운영 callback URI 추가. 현재 Google이 `redirect_uri_mismatch`를 반환합니다.
+- 상세 결과: `docs/report/task_m10_6_report_v2.md`.
+
 ## 상태
 
 - 상태: upstream 인증 단계 진단 패치 Preview 배포·인프라 검증 완료, 실계정 재검증 대기

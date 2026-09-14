@@ -2,14 +2,15 @@
 
 ## 상태
 
-- 상태: 구현·로컬 검증·완료보고서 작성 완료, 최종 검토 대기
+- 상태: Git 반영·Production 배포 완료, Google 운영 redirect URI 등록 대기
 - 작성자: Codex
 - 작성일: 2026-09-14
 - 이슈: [Issue #6](https://github.com/jg-vercel/domination-dashboard/issues/6)
 - 마일스톤: M1.0 - DomiNations 무료 아이템 수령 대시보드 MVP (#1)
-- 브랜치: `local/task6`
+- 브랜치: `local/task6`에서 구현 후 `devel`로 원격 반영
 - 승인 근거: 작업지시자 “완료보고서 작성단계까지 진행해”.
 - 승인 범위: Preview 보완 → 기존 이슈·브랜치 확인 → 할일·계획 → 구현 → 테스트 → 문서·완료보고서.
+- 추가 승인: 2026-09-14 “반영해” — Git 반영·운영 환경 설정·Production 배포·HTTP 검증.
 
 ## 요청과 조사 결과
 
@@ -45,19 +46,51 @@
 - 로컬 HTTP 200과 새 안내 출력 확인. 환경 미설정 로그인 API는 503 유지.
 - 자세한 명령·기대 결과·검증 한계: [테스트 결과](../working/task_m10_6_test_result_v2.md).
 
-## 운영 적용 및 남은 사항
+## 운영 반영 결과
 
-**이번 완료는 로컬 구현·검증·보고서 기준이며 운영 서비스 복구 완료를 뜻하지 않습니다.** 운영 환경 설정과 배포는 변경하지 않았습니다. 현재 운영 로그인 API의 설정 누락은 남아 있습니다.
+- 운영 URL: https://domination-dashboard.vercel.app
+- 배포 ID: `dpl_6nhBpxAXhJUZKT54zPqdtSra3so7`
+- 배포 URL: https://domination-dashboard-gyzdvobio-mintmd95-4401s-projects.vercel.app
+- 상태: `READY`, target `production`, Function region `iad1`
+- 배포 코드 커밋: `b118e39` (`devel` 원격 반영)
+- Google Client ID/Secret, Redis URL/Token의 기존 Secret을 복호화·노출하지 않고 Preview+Production target으로 확장했습니다.
+- Production `APP_BASE_URL`을 운영 URL로 설정하고 운영 전용 `APP_SESSION_SECRET`을 새로 생성했습니다. Preview의 키는 보존했습니다.
+- 새 운영 키는 향후 배포에도 고정 유지해야 합니다. 불필요한 키 교체는 기존 로그인을 무효화합니다.
+- Vercel 원격 빌드 및 TypeScript 검사가 통과했고 운영 별칭이 새 배포에 연결됐습니다.
 
-1. 실제 사용할 도메인과 배포 환경을 확정하고 해당 환경의 OAuth/Redis 설정을 확인·적용해야 합니다. Preview와 Production의 환경변수 및 브라우저 cookie는 별개입니다.
-2. `APP_SESSION_SECRET`을 지속적으로 유지하고 `APP_BASE_URL` 및 Google redirect URI를 실제 도메인과 맞춰야 합니다.
-3. 변경본 배포 후 실제 Google 계정으로 로그인, 브라우저 재시작·재접속, 갱신, 로그아웃을 확인해야 합니다.
-4. Browser 연결이 제공되지 않아 시각 검증은 미실시했습니다. DOM 컴포넌트 테스트와 로컬 HTTP 응답으로 제한해 검증했습니다.
+| 운영 검증 | 결과 |
+| --- | --- |
+| 대시보드 | 200, `Google로 로그인` 표시, 기존 설정 경고 없음 |
+| Health | 200 |
+| 실행 리전 | `iad1`, 일치 |
+| 외부 요청 국가 | US, `asia=false`, `targetMet=true` |
+| 미로그인 session POST | 401 `AUTH_REQUIRED` |
+| Google 로그인 시작 | 307 → `accounts.google.com`, offline OAuth 및 운영 callback 일치 |
+| OAuth flow cookie | Secure, HttpOnly 확인 |
+| Google 인증 페이지 | `redirect_uri_mismatch`, 운영 callback 미허용 |
+
+## 남은 사항: Google Cloud 콜백 등록
+
+**운영 배포와 환경변수 오류 복구는 완료됐지만 실제 Google 로그인은 아직 완료할 수 없습니다.** Google이 현재 운영 콜백을 허용하지 않아 인증 페이지에서 `redirect_uri_mismatch`를 반환합니다.
+
+Google Cloud Console의 사용 중인 Web OAuth 클라이언트에서 **승인된 리디렉션 URI**에 아래 주소를 추가해야 합니다. 기존 Preview URI는 유지합니다.
+
+```text
+https://domination-dashboard.vercel.app/api/auth/google/callback
+```
+
+- 설정 위치: https://console.cloud.google.com/auth/clients
+- 현재 Google Cloud connector·CLI 및 연결 가능한 Browser가 없어 이 등록은 직접 수행하지 못했습니다.
+- URI 등록 후 실제 계정 로그인, 브라우저 재시작·재접속, 세션 갱신 및 로그아웃 검증이 필요합니다.
+- 시각 검증은 Browser 연결 부재로 미실시했습니다. 배포본의 HTML 및 HTTP/OAuth 응답으로 확인했습니다.
+- Redis 실제 로그인 세션 생성·갱신은 OAuth 완료 이후 검증할 사항입니다.
 
 반영구적 사용 경험은 정상 활동으로 세션을 연장하는 방식입니다. 180일 미접속, cookie 삭제, 서버 세션 삭제, 암호화 키 변경, Google 권한 취소 등에는 재로그인이 필요할 수 있으며 Google 토큰의 영구 유효성을 보장하지 않습니다. [Google OAuth 공식 문서](https://developers.google.com/identity/protocols/oauth2)
 
 ## Git 및 종료 상태
 
-기존 등록된 M1.0 / Issue #6의 후속 작업이므로 중복 milestone·issue를 등록하지 않았고 기존 `local/task6`에서 작업했습니다. 기존 사용자 파일과 미추적 파일은 보존했습니다. 변경은 로컬 미커밋 상태이며 push·merge·배포·실수령을 수행하지 않았습니다.
+기존 등록된 M1.0 / Issue #6의 후속 작업으로 `local/task6`에 `b118e39`를 커밋하고 동일 내용의 `devel` 브랜치를 생성·push했습니다. 운영 배포는 명시적인 CLI `--prod`로 수행했습니다. 기존 사용자 파일과 미추적 파일은 보존했고 배포 대상에서도 제외했습니다. PR merge 및 실수령은 수행하지 않았습니다.
 
-이슈는 열린 상태로 유지했습니다. 이번 요청은 완료보고서 작성 단계까지이며 종료 승인이나 이슈 클로즈를 수행하지 않았습니다. 추후 종료 시 이슈 comment 확인 및 작업지시자 승인 절차를 적용합니다.
+기존 Vercel Git Production branch 설정은 `local/task1`이며 이번에 바꾸지 않았습니다. `devel` push 자체는 운영 배포가 아니며 이후 자동 운영 배포 전략 변경은 별도로 관리해야 합니다.
+
+이슈는 열린 상태로 유지했습니다. 종료 승인이나 이슈 클로즈를 수행하지 않았습니다. 추후 종료 시 이슈 comment 확인 및 작업지시자 승인 절차를 적용합니다.
